@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # IL-2 Sturmovik Campaign Analyzer
 
 Uma aplicação Python com interface gráfica para analisar dados de campanhas do IL-2 Sturmovik, exibir informações do piloto e esquadrão, listar ases, detalhar missões e permitir a exportação para PDF.
@@ -174,4 +175,4 @@ Este projeto é distribuído sob licença MIT. Veja o arquivo LICENSE para mais 
 ## Suporte
 
 Para suporte ou dúvidas, abra uma issue no repositório do projeto.
-
+=======
