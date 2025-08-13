@@ -1,48 +1,235 @@
+# ===================================================================
+#  1. IMPORTS PRINCIPAIS
+# ===================================================================
 import sys
 import os
 import json
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QFileDialog, QLabel, 
-                             QTabWidget, QTextEdit, QLineEdit, QFormLayout,
-                             QScrollArea, QGroupBox, QGridLayout, QComboBox,
-                             QMessageBox, QTableWidget, QTableWidgetItem,
-                             QSplitter, QFrame, QProgressBar)
-from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QFont
+import re
+import logging
+from datetime import datetime
+from typing import Dict, List, Any
+from pathlib import Path
 
-from data_parser import IL2DataParser
-from data_processor import IL2DataProcessor
-from pdf_generator import IL2PDFGenerator
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit, QLineEdit, 
+    QFormLayout, QScrollArea, QGroupBox, QGridLayout, QComboBox,
+    QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QProgressBar, QStatusBar, QSplitter
+)
+from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QDate
+from PyQt5.QtGui import QPixmap, QFont, QIcon
+from PyQt5.QtPrintSupport import QPrinter
+from PyQt5.QtWebEngineWidgets import QWebEngineView
 
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+# ===================================================================
+#  2. CONFIGURAÇÃO DE LOGGING
+# ===================================================================
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# ===================================================================
+#  3. CLASSES DE DADOS E LÓGICA (Parser, Processor, PDF)
+# ===================================================================
+
+class IL2DataParser:
+    """Lê e extrai dados brutos dos arquivos da campanha PWCGFC."""
+    def __init__(self, pwcgfc_path):
+        self.pwcgfc_path = Path(pwcgfc_path)
+        self.campaigns_path = self.pwcgfc_path / 'User' / 'Campaigns'
+
+    def get_json_data(self, file_path: Path) -> Any:
+        if not file_path.exists(): return None
+        try:
+            with file_path.open('r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Erro ao ler o arquivo JSON {file_path}: {e}")
+            return None
+
+    def get_campaigns(self) -> List[str]:
+        if not self.campaigns_path.exists(): return []
+        return sorted([p.name for p in self.campaigns_path.iterdir() if p.is_dir()])
+
+    def get_campaign_info(self, campaign_name: str) -> Dict:
+        return self.get_json_data(self.campaigns_path / campaign_name / 'Campaign.json') or {}
+
+    def get_campaign_squadron_members(self, campaign_name: str) -> Dict:
+        return self.get_json_data(self.campaigns_path / campaign_name / 'SquadronPersonnel.json') or {}
+
+    def get_combat_reports(self, campaign_name: str, player_serial: str) -> List[Dict]:
+        reports_path = self.campaigns_path / campaign_name / 'CombatReports' / player_serial
+        if not reports_path.exists(): return []
+        reports = []
+        for report_file in reports_path.glob('*.json'):
+            report_data = self.get_json_data(report_file)
+            if report_data:
+                reports.append(report_data)
+        return reports
+
+    def get_mission_data(self, campaign_name: str, report: Dict) -> Dict:
+        pilot_name = report.get("reportPilotName", "")
+        mission_date = report.get("date", "")
+        mission_filename = f"{pilot_name} {mission_date}.json"
+        mission_path = self.campaigns_path / campaign_name / 'MissionData' / mission_filename
+        return self.get_json_data(mission_path) or {}
+
+
+class IL2DataProcessor:
+    """Processa os dados brutos, organizando e enriquecendo as informações."""
+    def __init__(self, pwcgfc_path):
+        self.parser = IL2DataParser(pwcgfc_path)
+
+    def process_campaign(self, campaign_name: str) -> Dict:
+        campaign_info = self.parser.get_campaign_info(campaign_name)
+        if not campaign_info: return {}
+
+        player_serial = str(campaign_info.get('referencePlayerSerialNumber', ''))
+        combat_reports = self.parser.get_combat_reports(campaign_name, player_serial)
+        
+        player_squadron_name = combat_reports[0].get('squadron') if combat_reports else "N/A"
+        
+        squadron_personnel = self.parser.get_campaign_squadron_members(campaign_name)
+
+        pilot_data = self._process_pilot_data(campaign_info, combat_reports)
+        missions_data = self._process_missions_data(campaign_name, combat_reports)
+        squadron_data = self._process_squadron_data(squadron_personnel, player_squadron_name)
+
+        return {
+            'pilot': pilot_data,
+            'missions': missions_data,
+            'squadron': squadron_data
+        }
+
+    def _process_pilot_data(self, campaign_info, combat_reports):
+        return {
+            'name': campaign_info.get('name', 'N/A'),
+            'squadron': combat_reports[0].get('squadron', 'N/A') if combat_reports else 'N/A',
+            'total_missions': len(combat_reports),
+            'campaign_date': self._format_date(campaign_info.get('date', 'N/A')),
+        }
+
+    def _process_missions_data(self, campaign_name, combat_reports):
+        missions = []
+        for report in combat_reports:
+            mission_details = self.parser.get_mission_data(campaign_name, report)
+            
+            pilots_in_mission = []
+            if report.get('haReport'):
+                pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
+
+            weather_text = "Não disponível"
+            if mission_details.get('missionDescription'):
+                match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', mission_details['missionDescription'], re.DOTALL)
+                if match:
+                    weather_text = match.group(1).strip()
+
+            mission_entry = {
+                'date': self._format_date(report.get('date', 'N/A')),
+                'time': report.get('time', 'N/A'),
+                'aircraft': report.get('type', 'N/A'),
+                'duty': report.get('duty', 'N/A'),
+                'airfield': mission_details.get('missionHeader', {}).get('airfield', 'N/A'),
+                'pilots': pilots_in_mission,
+                'weather': weather_text,
+                'description': mission_details.get('missionDescription', 'Descrição da missão não encontrada.') # <-- NOVA LINHA
+            }
+            missions.append(mission_entry)
+        
+        missions.sort(key=lambda m: datetime.strptime(m['date'], '%d/%m/%Y'), reverse=True)
+        return missions
+
+    def _process_squadron_data(self, squadron_personnel, player_squadron_name):
+        squad_members = []
+        all_squads = squadron_personnel.get('squadronPersonnel', [])
+        
+        for squad in all_squads:
+            if squad.get('squadName') == player_squadron_name:
+                for pilot in squad.get('pilots', []):
+                    squad_members.append({
+                        'name': pilot.get('name', 'N/A'),
+                        'rank': pilot.get('rank', 'N/A'),
+                        'victories': len(pilot.get('victories', [])),
+                        'status': self._get_pilot_status(pilot.get('pilotActiveStatus', -1))
+                    })
+                break
+
+        squad_members.sort(key=lambda x: x['victories'], reverse=True)
+        return squad_members
+
+    def _get_pilot_status(self, status_code):
+        return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
+
+    def _format_date(self, date_str):
+        if not date_str or len(date_str) != 8: return date_str
+        try: return datetime.strptime(date_str, '%Y%m%d').strftime('%d/%m/%Y')
+        except: return date_str
+
+
+class IL2PDFGenerator:
+    """Gera relatórios em PDF para a campanha ou missões específicas."""
+    def __init__(self):
+        self.styles = getSampleStyleSheet()
+        self.styles['Title'].fontSize = 20
+        self.styles['Title'].alignment = TA_CENTER
+        self.styles['Title'].spaceAfter = 20
+        self.styles['Title'].textColor = colors.darkblue
+        self.styles.add(ParagraphStyle(name='CustomHeading', parent=self.styles['h2'], fontSize=16, alignment=TA_LEFT, spaceAfter=12, spaceBefore=12, textColor=colors.darkslateblue))
+
+    def generate_mission_report(self, mission_data, output_path):
+        doc = SimpleDocTemplate(output_path, pagesize=A4)
+        story = []
+        story.append(Paragraph(f"Relatório de Missão - {mission_data['date']}", self.styles['Title']))
+        story.append(Spacer(1, 0.2 * inch))
+        info_data = [['Data:', mission_data.get('date', 'N/A')], ['Hora:', mission_data.get('time', 'N/A')], ['Aeronave:', mission_data.get('aircraft', 'N/A')], ['Tipo de Missão:', mission_data.get('duty', 'N/A')], ['Aeródromo de Partida:', mission_data.get('airfield', 'N/A')]]
+        info_table = Table(info_data, colWidths=[1.5 * inch, 4.5 * inch])
+        info_table.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, colors.black), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        story.append(info_table)
+        story.append(Spacer(1, 0.3 * inch))
+        story.append(Paragraph("Condições Meteorológicas", self.styles['CustomHeading']))
+        story.append(Paragraph(mission_data.get('weather', 'Não disponível.').replace('\n', ''), self.styles['Normal']))  
+        story.append(Spacer(1, 0.3 * inch))
+        story.append(Paragraph("Pilotos na Missão", self.styles['CustomHeading']))
+        pilots = mission_data.get('pilots', [])
+        if pilots:
+            list_style = ParagraphStyle(name='list', parent=self.styles['Normal'], leftIndent=15)
+            pilot_list = [Paragraph(f"• {name}", list_style) for name in pilots]
+            story.extend(pilot_list)
+        else:
+            story.append(Paragraph("Lista de pilotos não disponível no relatório.", self.styles['Normal']))
+        try:
+            doc.build(story)
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao gerar PDF da missão: {e}")
+            return False
+
+# ===================================================================
+#  4. CLASSES DA APLICAÇÃO (Thread, Janela Principal)
+# ===================================================================
 class DataSyncThread(QThread):
-    """Thread para sincronização de dados em background"""
-    progress_updated = pyqtSignal(int)
     data_loaded = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
-
     def __init__(self, pwcgfc_path, campaign_name):
         super().__init__()
         self.pwcgfc_path = pwcgfc_path
         self.campaign_name = campaign_name
-
     def run(self):
         try:
-            self.progress_updated.emit(10)
             processor = IL2DataProcessor(self.pwcgfc_path)
-            
-            self.progress_updated.emit(30)
-            processed_data = processor.process_campaign_data(self.campaign_name)
-            
-            self.progress_updated.emit(80)
-            
-            if processed_data:
-                self.data_loaded.emit(processed_data)
-                self.progress_updated.emit(100)
-            else:
-                self.error_occurred.emit("Não foi possível carregar os dados da campanha.")
-                
+            processed_data = processor.process_campaign(self.campaign_name)
+            if processed_data: self.data_loaded.emit(processed_data)
+            else: self.error_occurred.emit("Não foi possível carregar os dados da campanha.")
         except Exception as e:
-            self.error_occurred.emit(f"Erro durante a sincronização: {str(e)}")
+            logger.error(f"Erro na thread de sincronização: {e}")
+            self.error_occurred.emit(str(e))
 
 class IL2CampaignAnalyzer(QMainWindow):
     def __init__(self):
@@ -50,431 +237,204 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.settings = QSettings('IL2CampaignAnalyzer', 'Settings')
         self.pwcgfc_path = ""
         self.current_data = {}
+        self.selected_mission_index = -1
         self.pdf_generator = IL2PDFGenerator()
         self.sync_thread = None
-        self.initUI()
-        self.load_saved_path()
+        self.setup_ui()
+        self.load_saved_settings()
 
-    def initUI(self):
-        self.setWindowTitle('IL-2 Sturmovik Campaign Analyzer v1.0')
+    def setup_ui(self):
+        self.setWindowTitle('IL-2 Campaign Analyzer v1.4')
         self.setGeometry(100, 100, 1200, 800)
-
-        # Widget central
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        # Layout principal
-        main_layout = QVBoxLayout()
-        central_widget.setLayout(main_layout)
-
-        # Seção de seleção de pasta
-        path_section = self.create_path_selection_section()
-        main_layout.addWidget(path_section)
-
-        # Seção de seleção de campanha
-        campaign_section = self.create_campaign_selection_section()
-        main_layout.addWidget(campaign_section)
-
-        # Barra de progresso
+        main_layout = QVBoxLayout(central_widget)
+        self.path_label = QLabel('Nenhum caminho selecionado')
+        main_layout.addWidget(self.path_label)
+        select_path_button = QPushButton('Selecionar Pasta PWCGFC')
+        select_path_button.clicked.connect(self.select_pwcgfc_folder)
+        main_layout.addWidget(select_path_button)
+        campaign_layout = QHBoxLayout()
+        campaign_layout.addWidget(QLabel("Campanha:"))
+        self.campaign_combo = QComboBox()
+        campaign_layout.addWidget(self.campaign_combo)
+        main_layout.addLayout(campaign_layout)
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         main_layout.addWidget(self.progress_bar)
-
-        # Abas principais
         self.tabs = QTabWidget()
         self.create_tabs()
         main_layout.addWidget(self.tabs)
-
-        # Botões de ação
         buttons_layout = QHBoxLayout()
-        
         sync_button = QPushButton('Sincronizar Dados')
         sync_button.clicked.connect(self.sync_data)
         buttons_layout.addWidget(sync_button)
-
-        export_button = QPushButton('Exportar para PDF')
-        export_button.clicked.connect(self.export_to_pdf)
-        buttons_layout.addWidget(export_button)
-
+        self.export_button = QPushButton('Exportar Relatório para PDF')
+        self.export_button.clicked.connect(self.export_to_pdf)
+        buttons_layout.addWidget(self.export_button)
         main_layout.addLayout(buttons_layout)
-
-    def create_path_selection_section(self):
-        group_box = QGroupBox("Configuração de Pasta")
-        layout = QVBoxLayout()
-
-        # Label para mostrar o caminho atual
-        self.path_label = QLabel('Nenhum caminho selecionado')
-        self.path_label.setWordWrap(True)
-        layout.addWidget(self.path_label)
-
-        # Botão para selecionar pasta
-        select_button = QPushButton('Selecionar Pasta PWCGFC')
-        select_button.clicked.connect(self.select_pwcgfc_folder)
-        layout.addWidget(select_button)
-
-        group_box.setLayout(layout)
-        return group_box
-
-    def create_campaign_selection_section(self):
-        group_box = QGroupBox("Seleção de Campanha")
-        layout = QHBoxLayout()
-
-        self.campaign_combo = QComboBox()
-        self.campaign_combo.currentTextChanged.connect(self.on_campaign_selected)
-        layout.addWidget(QLabel("Campanha:"))
-        layout.addWidget(self.campaign_combo)
-
-        group_box.setLayout(layout)
-        return group_box
+        self.setStatusBar(QStatusBar())
 
     def create_tabs(self):
-        # Aba Pilot Profile
-        self.tab_pilot_profile = self.create_pilot_profile_tab()
-        self.tabs.addTab(self.tab_pilot_profile, 'Pilot Profile')
-
-        # Aba Squad
-        self.tab_squad = self.create_squad_tab()
-        self.tabs.addTab(self.tab_squad, 'Squad')
-
-        # Aba Aces
-        self.tab_aces = self.create_aces_tab()
-        self.tabs.addTab(self.tab_aces, 'Aces')
-
-        # Aba Missions
-        self.tab_missions = self.create_missions_tab()
-        self.tabs.addTab(self.tab_missions, 'Missions')
-
-    def create_pilot_profile_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout()
-
-        # Scroll area para o conteúdo
-        scroll = QScrollArea()
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout()
-
-        # Informações básicas do piloto
-        basic_info_group = QGroupBox("Informações Básicas")
-        basic_info_layout = QFormLayout()
-
+        self.tab_pilot_profile = QWidget()
+        profile_layout = QFormLayout(self.tab_pilot_profile)
         self.pilot_name_label = QLabel("N/A")
-        self.pilot_serial_label = QLabel("N/A")
-        self.campaign_date_label = QLabel("N/A")
-        self.squadron_label = QLabel("N/A")
+        self.squadron_name_label = QLabel("N/A")
         self.total_missions_label = QLabel("N/A")
+        profile_layout.addRow("Nome:", self.pilot_name_label)
+        profile_layout.addRow("Esquadrão:", self.squadron_name_label)
+        profile_layout.addRow("Missões Voadas:", self.total_missions_label)
+        self.tabs.addTab(self.tab_pilot_profile, 'Perfil do Piloto')
 
-        basic_info_layout.addRow("Nome do Piloto:", self.pilot_name_label)
-        basic_info_layout.addRow("Número Serial:", self.pilot_serial_label)
-        basic_info_layout.addRow("Esquadrão:", self.squadron_label)
-        basic_info_layout.addRow("Data da Campanha:", self.campaign_date_label)
-        basic_info_layout.addRow("Total de Missões:", self.total_missions_label)
+        self.tab_squadron = QWidget()
+        squadron_layout = QVBoxLayout(self.tab_squadron)
+        self.squadron_table = QTableWidget()
+        self.squadron_table.setColumnCount(4)
+        self.squadron_table.setHorizontalHeaderLabels(["Nome", "Patente", "Abates", "Status"])
+        self.squadron_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.squadron_table.setSelectionBehavior(QTableWidget.SelectRows)
+        squadron_layout.addWidget(self.squadron_table)
+        self.tabs.addTab(self.tab_squadron, 'Esquadrão')
 
-        basic_info_group.setLayout(basic_info_layout)
-        scroll_layout.addWidget(basic_info_group)
-
-        # Informações complementares
-        complement_info_group = QGroupBox("Informações Complementares")
-        complement_layout = QFormLayout()
-
-        self.birth_date_edit = QLineEdit()
-        self.birth_date_edit.setPlaceholderText("DD/MM/AAAA")
-        self.birth_place_edit = QLineEdit()
-        self.age_label = QLabel("N/A")
-
-        complement_layout.addRow("Data de Nascimento:", self.birth_date_edit)
-        complement_layout.addRow("Local de Nascimento:", self.birth_place_edit)
-        complement_layout.addRow("Idade:", self.age_label)
-
-        # Botão para anexar foto
-        photo_button = QPushButton("Anexar Foto")
-        photo_button.clicked.connect(self.attach_photo)
-        complement_layout.addRow("Foto:", photo_button)
-
-        # Label para mostrar a foto
-        self.photo_label = QLabel("Nenhuma foto anexada")
-        self.photo_label.setMinimumSize(200, 200)
-        self.photo_label.setStyleSheet("border: 1px solid gray;")
-        self.photo_label.setAlignment(Qt.AlignCenter)
-        complement_layout.addRow("", self.photo_label)
-
-        complement_info_group.setLayout(complement_layout)
-        scroll_layout.addWidget(complement_info_group)
-
-        # Botão para salvar informações complementares
-        save_button = QPushButton("Salvar Informações Complementares")
-        save_button.clicked.connect(self.save_pilot_info)
-        scroll_layout.addWidget(save_button)
-
-        scroll_widget.setLayout(scroll_layout)
-        scroll.setWidget(scroll_widget)
-        scroll.setWidgetResizable(True)
-
-        layout.addWidget(scroll)
-        widget.setLayout(layout)
-        return widget
-
-    def create_squad_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout()
-
-        # Informações do esquadrão
-        self.squad_info_label = QLabel("Selecione uma campanha e sincronize os dados")
-        layout.addWidget(self.squad_info_label)
-
-        # Área de texto para atividades
-        self.squad_text = QTextEdit()
-        self.squad_text.setReadOnly(True)
-        layout.addWidget(self.squad_text)
-
-        widget.setLayout(layout)
-        return widget
-
-    def create_aces_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout()
-
-        self.aces_table = QTableWidget()
-        self.aces_table.setColumnCount(4)
-        self.aces_table.setHorizontalHeaderLabels(["Posição", "Nome", "Esquadrão", "Vitórias"])
-        layout.addWidget(self.aces_table)
-
-        widget.setLayout(layout)
-        return widget
-
-    def create_missions_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout()
-
+        # --- Alteração na Aba Missões ---
+        self.tab_missions = QWidget()
+        missions_layout = QVBoxLayout(self.tab_missions)
+        
+        # Splitter para dividir a tabela e a área de detalhes
+        splitter = QSplitter(Qt.Vertical)
+        
         self.missions_table = QTableWidget()
-        self.missions_table.setColumnCount(6)
-        self.missions_table.setHorizontalHeaderLabels(["Data", "Hora", "Aeronave", "Missão", "Local", "Altitude"])
-        layout.addWidget(self.missions_table)
-
-        widget.setLayout(layout)
-        return widget
+        self.missions_table.setColumnCount(4)
+        self.missions_table.setHorizontalHeaderLabels(["Data", "Hora", "Aeronave", "Tipo de Missão"])
+        self.missions_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.missions_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.missions_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.missions_table.itemSelectionChanged.connect(self.on_mission_selected)
+        
+        # Área de texto para os detalhes da missão
+        details_group = QGroupBox("Detalhes da Missão Selecionada")
+        details_layout = QVBoxLayout()
+        self.mission_details_text = QTextEdit()
+        self.mission_details_text.setReadOnly(True)
+        details_layout.addWidget(self.mission_details_text)
+        details_group.setLayout(details_layout)
+        
+        splitter.addWidget(self.missions_table)
+        splitter.addWidget(details_group)
+        splitter.setSizes([400, 200]) # Define tamanhos iniciais
+        
+        missions_layout.addWidget(splitter)
+        self.tabs.addTab(self.tab_missions, 'Missões')
 
     def select_pwcgfc_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, 'Selecionar Pasta PWCGFC')
         if folder_path:
             self.pwcgfc_path = folder_path
-            self.path_label.setText(f'Caminho selecionado: {folder_path}')
-            self.save_path()
-            self.load_campaigns()
-
-    def save_path(self):
-        self.settings.setValue('pwcgfc_path', self.pwcgfc_path)
-
-    def load_saved_path(self):
-        saved_path = self.settings.value('pwcgfc_path', '')
-        if saved_path and os.path.exists(saved_path):
-            self.pwcgfc_path = saved_path
-            self.path_label.setText(f'Caminho selecionado: {saved_path}')
+            self.path_label.setText(f'Caminho: {folder_path}')
+            self.settings.setValue('pwcgfc_path', self.pwcgfc_path)
             self.load_campaigns()
 
     def load_campaigns(self):
-        if not self.pwcgfc_path:
-            return
-
-        campaigns_path = os.path.join(self.pwcgfc_path, 'User', 'Campaigns')
-        if not os.path.exists(campaigns_path):
-            QMessageBox.warning(self, "Aviso", "Pasta de campanhas não encontrada!")
-            return
-
+        if not self.pwcgfc_path: return
+        parser = IL2DataParser(self.pwcgfc_path)
+        campaigns = parser.get_campaigns()
         self.campaign_combo.clear()
-        for item in os.listdir(campaigns_path):
-            item_path = os.path.join(campaigns_path, item)
-            if os.path.isdir(item_path):
-                self.campaign_combo.addItem(item)
-
-    def on_campaign_selected(self, campaign_name):
-        if not campaign_name:
-            return
-        # Limpar dados anteriores
-        self.clear_all_data()
+        self.campaign_combo.addItems(campaigns)
 
     def sync_data(self):
-        if not self.pwcgfc_path:
-            QMessageBox.warning(self, "Aviso", "Selecione primeiro a pasta PWCGFC!")
-            return
-
         current_campaign = self.campaign_combo.currentText()
-        if not current_campaign:
-            QMessageBox.warning(self, "Aviso", "Selecione uma campanha!")
+        if not self.pwcgfc_path or not current_campaign:
+            QMessageBox.warning(self, "Aviso", "Selecione a pasta e uma campanha primeiro!")
             return
-
-        # Iniciar sincronização em thread separada
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-
         self.sync_thread = DataSyncThread(self.pwcgfc_path, current_campaign)
-        self.sync_thread.progress_updated.connect(self.progress_bar.setValue)
         self.sync_thread.data_loaded.connect(self.on_data_loaded)
         self.sync_thread.error_occurred.connect(self.on_sync_error)
         self.sync_thread.start()
 
-    def on_data_loaded(self, processed_data):
-        self.current_data = processed_data
-        self.update_all_tabs()
+    def on_data_loaded(self, data):
+        self.current_data = data
+        self.update_ui_with_data()
         self.progress_bar.setVisible(False)
-        QMessageBox.information(self, "Sucesso", "Dados sincronizados com sucesso!")
+        self.statusBar().showMessage("Dados carregados com sucesso!", 5000)
 
     def on_sync_error(self, error_message):
         self.progress_bar.setVisible(False)
-        QMessageBox.critical(self, "Erro", error_message)
+        QMessageBox.critical(self, "Erro de Sincronização", error_message)
+        self.statusBar().showMessage("Falha ao carregar dados.", 5000)
 
-    def update_all_tabs(self):
-        if not self.current_data:
-            return
+    def update_ui_with_data(self):
+        self.selected_mission_index = -1
+        self.export_button.setText("Exportar Relatório para PDF")
+        self.mission_details_text.clear() # Limpa o painel de detalhes
 
-        self.update_pilot_profile_tab()
-        self.update_squad_tab()
-        self.update_aces_tab()
-        self.update_missions_tab()
-
-    def update_pilot_profile_tab(self):
         pilot_data = self.current_data.get('pilot', {})
-        
         self.pilot_name_label.setText(pilot_data.get('name', 'N/A'))
-        self.pilot_serial_label.setText(str(pilot_data.get('serial_number', 'N/A')))
-        self.squadron_label.setText(pilot_data.get('squadron', 'N/A'))
-        self.campaign_date_label.setText(pilot_data.get('campaign_date', 'N/A'))
-        self.total_missions_label.setText(str(pilot_data.get('total_missions', 0)))
+        self.squadron_name_label.setText(pilot_data.get('squadron', 'N/A'))
+        self.total_missions_label.setText(str(pilot_data.get('total_missions', '0')))
 
-        # Carregar informações complementares salvas
-        if pilot_data.get('birth_date'):
-            self.birth_date_edit.setText(pilot_data['birth_date'])
-        if pilot_data.get('birth_place'):
-            self.birth_place_edit.setText(pilot_data['birth_place'])
-        if pilot_data.get('age'):
-            self.age_label.setText(f"{pilot_data['age']} anos")
+        squadron_data = self.current_data.get('squadron', [])
+        self.squadron_table.setRowCount(len(squadron_data))
+        for row, member in enumerate(squadron_data):
+            self.squadron_table.setItem(row, 0, QTableWidgetItem(member.get('name')))
+            self.squadron_table.setItem(row, 1, QTableWidgetItem(member.get('rank')))
+            self.squadron_table.setItem(row, 2, QTableWidgetItem(str(member.get('victories'))))
+            self.squadron_table.setItem(row, 3, QTableWidgetItem(member.get('status')))
 
-    def update_squad_tab(self):
-        squad_data = self.current_data.get('squad', {})
-        
-        info_text = f"Esquadrão: {squad_data.get('name', 'N/A')}\n"
-        info_text += f"Total de Vitórias: {squad_data.get('total_victories', 0)}\n"
-        info_text += f"Membros Conhecidos: {len(squad_data.get('members', []))}"
-        
-        self.squad_info_label.setText(info_text)
-
-        # Atividades recentes
-        activities_text = "Atividades Recentes:\n\n"
-        for activity in squad_data.get('recent_activities', []):
-            activities_text += f"{activity.get('date', 'N/A')}: {activity.get('activity', 'N/A')}\n\n"
-        
-        self.squad_text.setText(activities_text)
-
-    def update_aces_tab(self):
-        aces_data = self.current_data.get('aces', [])
-        
-        self.aces_table.setRowCount(len(aces_data))
-        
-        for row, ace in enumerate(aces_data):
-            self.aces_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-            self.aces_table.setItem(row, 1, QTableWidgetItem(ace.get('name', 'N/A')))
-            self.aces_table.setItem(row, 2, QTableWidgetItem(ace.get('squadron', 'N/A')))
-            self.aces_table.setItem(row, 3, QTableWidgetItem(str(ace.get('victories', 0))))
-
-        self.aces_table.resizeColumnsToContents()
-
-    def update_missions_tab(self):
         missions_data = self.current_data.get('missions', [])
-        
         self.missions_table.setRowCount(len(missions_data))
-        
         for row, mission in enumerate(missions_data):
-            self.missions_table.setItem(row, 0, QTableWidgetItem(mission.get('date', 'N/A')))
-            self.missions_table.setItem(row, 1, QTableWidgetItem(mission.get('time', 'N/A')))
-            self.missions_table.setItem(row, 2, QTableWidgetItem(mission.get('aircraft', 'N/A')))
-            self.missions_table.setItem(row, 3, QTableWidgetItem(mission.get('duty', 'N/A')))
-            self.missions_table.setItem(row, 4, QTableWidgetItem(mission.get('locality', 'N/A')))
-            self.missions_table.setItem(row, 5, QTableWidgetItem(mission.get('altitude', 'N/A')))
+            self.missions_table.setItem(row, 0, QTableWidgetItem(mission.get('date')))
+            self.missions_table.setItem(row, 1, QTableWidgetItem(mission.get('time')))
+            self.missions_table.setItem(row, 2, QTableWidgetItem(mission.get('aircraft')))
+            self.missions_table.setItem(row, 3, QTableWidgetItem(mission.get('duty')))
 
-        self.missions_table.resizeColumnsToContents()
-
-    def clear_all_data(self):
-        # Limpar dados das abas
-        self.pilot_name_label.setText("N/A")
-        self.pilot_serial_label.setText("N/A")
-        self.squadron_label.setText("N/A")
-        self.campaign_date_label.setText("N/A")
-        self.total_missions_label.setText("N/A")
-        self.age_label.setText("N/A")
-        
-        self.squad_info_label.setText("Selecione uma campanha e sincronize os dados")
-        self.squad_text.clear()
-        
-        self.aces_table.setRowCount(0)
-        self.missions_table.setRowCount(0)
-
-    def attach_photo(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, 'Selecionar Foto', '', 'Imagens (*.png *.jpg *.jpeg)')
-        if file_path:
-            pixmap = QPixmap(file_path)
-            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.photo_label.setPixmap(scaled_pixmap)
+    def on_mission_selected(self):
+        selected_items = self.missions_table.selectedItems()
+        if selected_items:
+            self.selected_mission_index = selected_items[0].row()
+            self.export_button.setText(f"Exportar Missão de {self.missions_table.item(self.selected_mission_index, 0).text()} para PDF")
             
-            # Salvar caminho da foto
-            self.photo_path = file_path
-
-    def save_pilot_info(self):
-        birth_date = self.birth_date_edit.text().strip()
-        birth_place = self.birth_place_edit.text().strip()
-        
-        if not birth_date and not birth_place:
-            QMessageBox.warning(self, "Aviso", "Preencha pelo menos um campo!")
-            return
-
-        # Validar formato da data
-        if birth_date:
-            try:
-                from datetime import datetime
-                datetime.strptime(birth_date, '%d/%m/%Y')
-            except ValueError:
-                QMessageBox.warning(self, "Aviso", "Formato de data inválido! Use DD/MM/AAAA")
-                return
-
-        # Salvar informações
-        processor = IL2DataProcessor(self.pwcgfc_path)
-        photo_path = getattr(self, 'photo_path', None)
-        
-        if processor.save_pilot_complement_info(birth_date, birth_place, photo_path):
-            QMessageBox.information(self, "Sucesso", "Informações salvas com sucesso!")
-            
-            # Recalcular idade se possível
-            if birth_date and self.current_data.get('pilot', {}).get('last_mission_date'):
-                try:
-                    from datetime import datetime
-                    birth_date_obj = datetime.strptime(birth_date, '%d/%m/%Y')
-                    last_mission = self.current_data['pilot']['last_mission_date']
-                    age = last_mission.year - birth_date_obj.year
-                    if last_mission.month < birth_date_obj.month or \
-                       (last_mission.month == birth_date_obj.month and last_mission.day < birth_date_obj.day):
-                        age -= 1
-                    self.age_label.setText(f"{age} anos")
-                except:
-                    pass
+            # Exibe a descrição da missão no painel de detalhes
+            mission_data = self.current_data['missions'][self.selected_mission_index]
+            self.mission_details_text.setText(mission_data.get('description', ''))
         else:
-            QMessageBox.critical(self, "Erro", "Erro ao salvar informações!")
+            self.selected_mission_index = -1
+            self.export_button.setText("Exportar Relatório para PDF")
+            self.mission_details_text.clear()
 
     def export_to_pdf(self):
         if not self.current_data:
             QMessageBox.warning(self, "Aviso", "Sincronize os dados primeiro!")
             return
+        if self.selected_mission_index != -1:
+            mission_to_export = self.current_data['missions'][self.selected_mission_index]
+            default_filename = f"Missao_{mission_to_export['date'].replace('/', '-')}.pdf"
+            file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar Relatório da Missão', default_filename, 'PDF (*.pdf)')
+            if file_path:
+                success = self.pdf_generator.generate_mission_report(mission_to_export, file_path)
+                if success: QMessageBox.information(self, "Sucesso", f"Relatório da missão salvo em: {file_path}")
+                else: QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
+        else:
+            QMessageBox.information(self, "Aviso", "Selecione uma missão na tabela para exportar seu relatório detalhado.")
 
-        file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar PDF', '', 'PDF (*.pdf)')
-        if file_path:
-            try:
-                if self.pdf_generator.generate_pilot_report(self.current_data, file_path):
-                    QMessageBox.information(self, "Sucesso", f"PDF gerado com sucesso!\n{file_path}")
-                else:
-                    QMessageBox.critical(self, "Erro", "Erro ao gerar PDF!")
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Erro ao gerar PDF: {str(e)}")
+    def load_saved_settings(self):
+        saved_path = self.settings.value('pwcgfc_path', '')
+        if saved_path and os.path.exists(saved_path):
+            self.pwcgfc_path = saved_path
+            self.path_label.setText(f'Caminho: {saved_path}')
+            self.load_campaigns()
 
+    def closeEvent(self, event):
+        self.settings.setValue('pwcgfc_path', self.pwcgfc_path)
+        event.accept()
+
+# ===================================================================
+#  5. PONTO DE ENTRADA DA APLICAÇÃO
+# ===================================================================
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = IL2CampaignAnalyzer()
     ex.show()
     sys.exit(app.exec_())
-
