@@ -32,7 +32,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 # ===================================================================
 #  2. CONFIGURAÇÃO DE LOGGING
 # ===================================================================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
 # ===================================================================
@@ -46,7 +46,9 @@ class IL2DataParser:
         self.campaigns_path = self.pwcgfc_path / 'User' / 'Campaigns'
 
     def get_json_data(self, file_path: Path) -> Any:
-        if not file_path.exists(): return None
+        if not file_path.exists():
+            logger.warning(f"Arquivo não encontrado: {file_path}")
+            return None
         try:
             with file_path.open('r', encoding='utf-8') as f:
                 return json.load(f)
@@ -61,25 +63,51 @@ class IL2DataParser:
     def get_campaign_info(self, campaign_name: str) -> Dict:
         return self.get_json_data(self.campaigns_path / campaign_name / 'Campaign.json') or {}
 
-    def get_campaign_squadron_members(self, campaign_name: str) -> Dict:
-        return self.get_json_data(self.campaigns_path / campaign_name / 'SquadronPersonnel.json') or {}
+    def get_campaign_aces(self, campaign_name: str) -> Dict:
+        return self.get_json_data(self.campaigns_path / campaign_name / 'CampaignAces.json') or {}
 
     def get_combat_reports(self, campaign_name: str, player_serial: str) -> List[Dict]:
         reports_path = self.campaigns_path / campaign_name / 'CombatReports' / player_serial
         if not reports_path.exists(): return []
         reports = []
-        for report_file in reports_path.glob('*.json'):
+        for report_file in sorted(reports_path.glob('*.json'), reverse=True):
             report_data = self.get_json_data(report_file)
             if report_data:
                 reports.append(report_data)
         return reports
 
     def get_mission_data(self, campaign_name: str, report: Dict) -> Dict:
+        """
+        Lógica de busca ativa para encontrar o arquivo de dados da missão.
+        """
+        mission_data_dir = self.campaigns_path / campaign_name / 'MissionData'
+        if not mission_data_dir.exists():
+            logger.warning(f"Diretório de dados da missão não encontrado: {mission_data_dir}")
+            return {}
+
         pilot_name = report.get("reportPilotName", "")
-        mission_date = report.get("date", "")
-        mission_filename = f"{pilot_name} {mission_date}.json"
-        mission_path = self.campaigns_path / campaign_name / 'MissionData' / mission_filename
-        return self.get_json_data(mission_path) or {}
+        pilot_name_clean = re.sub(r'^(Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+', '', pilot_name)
+        
+        date_str_yyyymmdd = report.get("date", "")
+        if not date_str_yyyymmdd:
+            return {}
+
+        try:
+            date_obj = datetime.strptime(date_str_yyyymmdd, '%Y%m%d')
+            date_str_dashed = date_obj.strftime('%Y-%m-%d')
+        except ValueError:
+            logger.error(f"Formato de data inválido no relatório: {date_str_yyyymmdd}")
+            return {}
+
+        # Procura ativamente pelo arquivo
+        for mission_file in mission_data_dir.glob('*.MissionData.json'):
+            # Verifica se o nome do arquivo contém o nome limpo do piloto E a data formatada
+            if pilot_name_clean in mission_file.name and date_str_dashed in mission_file.name:
+                logger.info(f"Arquivo de missão correspondente encontrado: {mission_file.name}")
+                return self.get_json_data(mission_file) or {}
+        
+        logger.warning(f"Nenhum arquivo de dados da missão encontrado para {pilot_name_clean} na data {date_str_dashed}")
+        return {}
 
 
 class IL2DataProcessor:
@@ -93,14 +121,12 @@ class IL2DataProcessor:
 
         player_serial = str(campaign_info.get('referencePlayerSerialNumber', ''))
         combat_reports = self.parser.get_combat_reports(campaign_name, player_serial)
+        aces_data = self.parser.get_campaign_aces(campaign_name)
         
-        player_squadron_name = combat_reports[0].get('squadron') if combat_reports else "N/A"
+        missions_data, player_squadron_id = self._process_missions_data(campaign_name, combat_reports, player_serial)
         
-        squadron_personnel = self.parser.get_campaign_squadron_members(campaign_name)
-
         pilot_data = self._process_pilot_data(campaign_info, combat_reports)
-        missions_data = self._process_missions_data(campaign_name, combat_reports)
-        squadron_data = self._process_squadron_data(squadron_personnel, player_squadron_name)
+        squadron_data = self._process_squadron_data(aces_data, missions_data, player_squadron_id)
 
         return {
             'pilot': pilot_data,
@@ -116,8 +142,10 @@ class IL2DataProcessor:
             'campaign_date': self._format_date(campaign_info.get('date', 'N/A')),
         }
 
-    def _process_missions_data(self, campaign_name, combat_reports):
+    def _process_missions_data(self, campaign_name, combat_reports, player_serial):
         missions = []
+        player_squadron_id = None
+
         for report in combat_reports:
             mission_details = self.parser.get_mission_data(campaign_name, report)
             
@@ -126,10 +154,17 @@ class IL2DataProcessor:
                 pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
 
             weather_text = "Não disponível"
-            if mission_details.get('missionDescription'):
-                match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', mission_details['missionDescription'], re.DOTALL)
+            description_text = "Descrição da missão não encontrada."
+            if mission_details:
+                description_text = mission_details.get('missionDescription', description_text)
+                match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', description_text, re.DOTALL)
                 if match:
                     weather_text = match.group(1).strip()
+                
+                if not player_squadron_id:
+                    mission_planes = mission_details.get('missionPlanes', {})
+                    if player_serial in mission_planes:
+                        player_squadron_id = mission_planes[player_serial].get('squadronId')
 
             mission_entry = {
                 'date': self._format_date(report.get('date', 'N/A')),
@@ -139,30 +174,40 @@ class IL2DataProcessor:
                 'airfield': mission_details.get('missionHeader', {}).get('airfield', 'N/A'),
                 'pilots': pilots_in_mission,
                 'weather': weather_text,
-                'description': mission_details.get('missionDescription', 'Descrição da missão não encontrada.') # <-- NOVA LINHA
+                'description': description_text,
+                'mission_planes': mission_details.get('missionPlanes', {})
             }
             missions.append(mission_entry)
         
-        missions.sort(key=lambda m: datetime.strptime(m['date'], '%d/%m/%Y'), reverse=True)
-        return missions
+        return missions, player_squadron_id
 
-    def _process_squadron_data(self, squadron_personnel, player_squadron_name):
-        squad_members = []
-        all_squads = squadron_personnel.get('squadronPersonnel', [])
+    def _process_squadron_data(self, aces_data, missions_data, player_squadron_id):
+        if not player_squadron_id:
+            logger.warning("ID do esquadrão do jogador não encontrado. Tabela de esquadrão ficará vazia.")
+            return []
+
+        squad_members = {}
         
-        for squad in all_squads:
-            if squad.get('squadName') == player_squadron_name:
-                for pilot in squad.get('pilots', []):
-                    squad_members.append({
-                        'name': pilot.get('name', 'N/A'),
-                        'rank': pilot.get('rank', 'N/A'),
-                        'victories': len(pilot.get('victories', [])),
-                        'status': self._get_pilot_status(pilot.get('pilotActiveStatus', -1))
-                    })
-                break
+        for mission in missions_data:
+            for pilot_serial, pilot_info in mission.get('mission_planes', {}).items():
+                if pilot_info.get('squadronId') == player_squadron_id:
+                    squad_members[pilot_serial] = {
+                        'name': pilot_info.get('pilotName', 'N/A'),
+                        'rank': 'N/A',
+                        'victories': 0,
+                        'status': 'Ativo'
+                    }
 
-        squad_members.sort(key=lambda x: x['victories'], reverse=True)
-        return squad_members
+        all_aces = aces_data.get('acesInCampaign', {})
+        for pilot_serial, ace_info in all_aces.items():
+            if pilot_serial in squad_members:
+                squad_members[pilot_serial]['rank'] = ace_info.get('rank', 'N/A')
+                squad_members[pilot_serial]['victories'] = len(ace_info.get('victories', []))
+                squad_members[pilot_serial]['status'] = self._get_pilot_status(ace_info.get('pilotActiveStatus', -1))
+
+        final_list = list(squad_members.values())
+        final_list.sort(key=lambda x: x['victories'], reverse=True)
+        return final_list
 
     def _get_pilot_status(self, status_code):
         return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
@@ -244,7 +289,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.load_saved_settings()
 
     def setup_ui(self):
-        self.setWindowTitle('IL-2 Campaign Analyzer v1.4')
+        self.setWindowTitle('IL-2 Campaign Analyzer v1.6')
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -296,13 +341,9 @@ class IL2CampaignAnalyzer(QMainWindow):
         squadron_layout.addWidget(self.squadron_table)
         self.tabs.addTab(self.tab_squadron, 'Esquadrão')
 
-        # --- Alteração na Aba Missões ---
         self.tab_missions = QWidget()
         missions_layout = QVBoxLayout(self.tab_missions)
-        
-        # Splitter para dividir a tabela e a área de detalhes
         splitter = QSplitter(Qt.Vertical)
-        
         self.missions_table = QTableWidget()
         self.missions_table.setColumnCount(4)
         self.missions_table.setHorizontalHeaderLabels(["Data", "Hora", "Aeronave", "Tipo de Missão"])
@@ -310,19 +351,15 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.missions_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.missions_table.setSelectionMode(QTableWidget.SingleSelection)
         self.missions_table.itemSelectionChanged.connect(self.on_mission_selected)
-        
-        # Área de texto para os detalhes da missão
         details_group = QGroupBox("Detalhes da Missão Selecionada")
         details_layout = QVBoxLayout()
         self.mission_details_text = QTextEdit()
         self.mission_details_text.setReadOnly(True)
         details_layout.addWidget(self.mission_details_text)
         details_group.setLayout(details_layout)
-        
         splitter.addWidget(self.missions_table)
         splitter.addWidget(details_group)
-        splitter.setSizes([400, 200]) # Define tamanhos iniciais
-        
+        splitter.setSizes([400, 200])
         missions_layout.addWidget(splitter)
         self.tabs.addTab(self.tab_missions, 'Missões')
 
@@ -367,7 +404,7 @@ class IL2CampaignAnalyzer(QMainWindow):
     def update_ui_with_data(self):
         self.selected_mission_index = -1
         self.export_button.setText("Exportar Relatório para PDF")
-        self.mission_details_text.clear() # Limpa o painel de detalhes
+        self.mission_details_text.clear()
 
         pilot_data = self.current_data.get('pilot', {})
         self.pilot_name_label.setText(pilot_data.get('name', 'N/A'))
@@ -395,8 +432,6 @@ class IL2CampaignAnalyzer(QMainWindow):
         if selected_items:
             self.selected_mission_index = selected_items[0].row()
             self.export_button.setText(f"Exportar Missão de {self.missions_table.item(self.selected_mission_index, 0).text()} para PDF")
-            
-            # Exibe a descrição da missão no painel de detalhes
             mission_data = self.current_data['missions'][self.selected_mission_index]
             self.mission_details_text.setText(mission_data.get('description', ''))
         else:
