@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
 
-# Importações do PyQt5 que são REALMENTE usadas
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit, 
@@ -60,8 +59,10 @@ class IL2DataParser:
     def get_campaign_info(self, campaign_name: str) -> Dict:
         return self.get_json_data(self.campaigns_path / campaign_name / 'Campaign.json') or {}
 
-    def get_campaign_aces(self, campaign_name: str) -> Dict:
-        return self.get_json_data(self.campaigns_path / campaign_name / 'CampaignAces.json') or {}
+    def get_squadron_personnel(self, campaign_name: str, squadron_id: int) -> Dict:
+        """Carrega o arquivo de pessoal do esquadrão específico."""
+        personnel_path = self.campaigns_path / campaign_name / 'Personnel' / f'{squadron_id}.json'
+        return self.get_json_data(personnel_path) or {}
 
     def get_combat_reports(self, campaign_name: str, player_serial: str) -> List[Dict]:
         reports_path = self.campaigns_path / campaign_name / 'CombatReports' / player_serial
@@ -115,12 +116,14 @@ class IL2DataProcessor:
 
         player_serial = str(campaign_info.get('referencePlayerSerialNumber', ''))
         combat_reports = self.parser.get_combat_reports(campaign_name, player_serial)
-        aces_data = self.parser.get_campaign_aces(campaign_name)
         
         missions_data, player_squadron_id = self._process_missions_data(campaign_name, combat_reports, player_serial)
         
         pilot_data = self._process_pilot_data(campaign_info, combat_reports)
-        squadron_data = self._process_squadron_data(aces_data, missions_data, player_squadron_id)
+        
+        # Carrega os dados do esquadrão usando o ID encontrado
+        squadron_personnel = self.parser.get_squadron_personnel(campaign_name, player_squadron_id)
+        squadron_data = self._process_squadron_data(squadron_personnel)
 
         return {
             'pilot': pilot_data,
@@ -169,39 +172,28 @@ class IL2DataProcessor:
                 'pilots': pilots_in_mission,
                 'weather': weather_text,
                 'description': description_text,
-                'mission_planes': mission_details.get('missionPlanes', {})
             }
             missions.append(mission_entry)
         
         return missions, player_squadron_id
 
-    def _process_squadron_data(self, aces_data, missions_data, player_squadron_id):
-        if not player_squadron_id:
-            logger.warning("ID do esquadrão do jogador não encontrado. Tabela de esquadrão ficará vazia.")
-            return []
+    def _process_squadron_data(self, squadron_personnel):
+        squad_members = []
+        if not squadron_personnel:
+            logger.warning("Arquivo de pessoal do esquadrão não encontrado ou vazio.")
+            return squad_members
 
-        squad_members = {}
-        
-        for mission in missions_data:
-            for pilot_serial, pilot_info in mission.get('mission_planes', {}).items():
-                if pilot_info.get('squadronId') == player_squadron_id:
-                    squad_members[pilot_serial] = {
-                        'name': pilot_info.get('pilotName', 'N/A'),
-                        'rank': 'N/A',
-                        'victories': 0,
-                        'status': 'Ativo'
-                    }
+        squad_collection = squadron_personnel.get('squadronMemberCollection', {})
+        for pilot_serial, pilot_info in squad_collection.items():
+            squad_members.append({
+                'name': pilot_info.get('name', 'N/A'),
+                'rank': pilot_info.get('rank', 'N/A'),
+                'victories': len(pilot_info.get('victories', [])),
+                'status': self._get_pilot_status(pilot_info.get('pilotActiveStatus', -1))
+            })
 
-        all_aces = aces_data.get('acesInCampaign', {})
-        for pilot_serial, ace_info in all_aces.items():
-            if pilot_serial in squad_members:
-                squad_members[pilot_serial]['rank'] = ace_info.get('rank', 'N/A')
-                squad_members[pilot_serial]['victories'] = len(ace_info.get('victories', []))
-                squad_members[pilot_serial]['status'] = self._get_pilot_status(ace_info.get('pilotActiveStatus', -1))
-
-        final_list = list(squad_members.values())
-        final_list.sort(key=lambda x: x['victories'], reverse=True)
-        return final_list
+        squad_members.sort(key=lambda x: x['victories'], reverse=True)
+        return squad_members
 
     def _get_pilot_status(self, status_code):
         return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
@@ -288,7 +280,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.load_saved_settings()
 
     def setup_ui(self):
-        self.setWindowTitle('IL-2 Campaign Analyzer v1.7 (Clean)')
+        self.setWindowTitle('IL-2 Campaign Analyzer v1.8 (Final)')
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -414,18 +406,47 @@ class IL2CampaignAnalyzer(QMainWindow):
         squadron_data = self.current_data.get('squadron', [])
         self.squadron_table.setRowCount(len(squadron_data))
         for row, member in enumerate(squadron_data):
-            self.squadron_table.setItem(row, 0, QTableWidgetItem(member.get('name')))
-            self.squadron_table.setItem(row, 1, QTableWidgetItem(member.get('rank')))
-            self.squadron_table.setItem(row, 2, QTableWidgetItem(str(member.get('victories'))))
-            self.squadron_table.setItem(row, 3, QTableWidgetItem(member.get('status')))
+            # Cria os itens da tabela
+            name_item = QTableWidgetItem(member.get('name'))
+            rank_item = QTableWidgetItem(member.get('rank'))
+            victories_item = QTableWidgetItem(str(member.get('victories')))
+            status_item = QTableWidgetItem(member.get('status'))
+
+            # --- CORREÇÃO AQUI: Torna cada item não editável ---
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            rank_item.setFlags(rank_item.flags() & ~Qt.ItemIsEditable)
+            victories_item.setFlags(victories_item.flags() & ~Qt.ItemIsEditable)
+            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+            # --- FIM DA CORREÇÃO ---
+
+            # Adiciona os itens à tabela
+            self.squadron_table.setItem(row, 0, name_item)
+            self.squadron_table.setItem(row, 1, rank_item)
+            self.squadron_table.setItem(row, 2, victories_item)
+            self.squadron_table.setItem(row, 3, status_item)
 
         missions_data = self.current_data.get('missions', [])
         self.missions_table.setRowCount(len(missions_data))
         for row, mission in enumerate(missions_data):
-            self.missions_table.setItem(row, 0, QTableWidgetItem(mission.get('date')))
-            self.missions_table.setItem(row, 1, QTableWidgetItem(mission.get('time')))
-            self.missions_table.setItem(row, 2, QTableWidgetItem(mission.get('aircraft')))
-            self.missions_table.setItem(row, 3, QTableWidgetItem(mission.get('duty')))
+            # Cria os itens da tabela
+            date_item = QTableWidgetItem(mission.get('date'))
+            time_item = QTableWidgetItem(mission.get('time'))
+            aircraft_item = QTableWidgetItem(mission.get('aircraft'))
+            duty_item = QTableWidgetItem(mission.get('duty'))
+
+            # --- CORREÇÃO AQUI: Torna cada item não editável ---
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+            time_item.setFlags(time_item.flags() & ~Qt.ItemIsEditable)
+            aircraft_item.setFlags(aircraft_item.flags() & ~Qt.ItemIsEditable)
+            duty_item.setFlags(duty_item.flags() & ~Qt.ItemIsEditable)
+            # --- FIM DA CORREÇÃO ---
+
+            # Adiciona os itens à tabela
+            self.missions_table.setItem(row, 0, date_item)
+            self.missions_table.setItem(row, 1, time_item)
+            self.missions_table.setItem(row, 2, aircraft_item)
+            self.missions_table.setItem(row, 3, duty_item)
+
 
     def on_mission_selected(self):
         selected_items = self.missions_table.selectedItems()
