@@ -10,18 +10,14 @@ from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
 
+# Importações do PyQt5 que são REALMENTE usadas
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit, QLineEdit, 
-    QFormLayout, QScrollArea, QGroupBox, QGridLayout, QComboBox,
-    QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QProgressBar, QStatusBar, QSplitter
+    QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit, 
+    QFormLayout, QGroupBox, QComboBox, QMessageBox, QTableWidget, 
+    QTableWidgetItem, QHeaderView, QProgressBar, QStatusBar, QSplitter
 )
-from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QTimer, QDate
-from PyQt5.QtGui import QPixmap, QFont, QIcon
-from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-
+from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -57,7 +53,8 @@ class IL2DataParser:
             return None
 
     def get_campaigns(self) -> List[str]:
-        if not self.campaigns_path.exists(): return []
+        if not self.campaigns_path.exists():
+            return []
         return sorted([p.name for p in self.campaigns_path.iterdir() if p.is_dir()])
 
     def get_campaign_info(self, campaign_name: str) -> Dict:
@@ -68,7 +65,8 @@ class IL2DataParser:
 
     def get_combat_reports(self, campaign_name: str, player_serial: str) -> List[Dict]:
         reports_path = self.campaigns_path / campaign_name / 'CombatReports' / player_serial
-        if not reports_path.exists(): return []
+        if not reports_path.exists():
+            return []
         reports = []
         for report_file in sorted(reports_path.glob('*.json'), reverse=True):
             report_data = self.get_json_data(report_file)
@@ -77,9 +75,6 @@ class IL2DataParser:
         return reports
 
     def get_mission_data(self, campaign_name: str, report: Dict) -> Dict:
-        """
-        Lógica de busca ativa para encontrar o arquivo de dados da missão.
-        """
         mission_data_dir = self.campaigns_path / campaign_name / 'MissionData'
         if not mission_data_dir.exists():
             logger.warning(f"Diretório de dados da missão não encontrado: {mission_data_dir}")
@@ -99,9 +94,7 @@ class IL2DataParser:
             logger.error(f"Formato de data inválido no relatório: {date_str_yyyymmdd}")
             return {}
 
-        # Procura ativamente pelo arquivo
         for mission_file in mission_data_dir.glob('*.MissionData.json'):
-            # Verifica se o nome do arquivo contém o nome limpo do piloto E a data formatada
             if pilot_name_clean in mission_file.name and date_str_dashed in mission_file.name:
                 logger.info(f"Arquivo de missão correspondente encontrado: {mission_file.name}")
                 return self.get_json_data(mission_file) or {}
@@ -117,7 +110,8 @@ class IL2DataProcessor:
 
     def process_campaign(self, campaign_name: str) -> Dict:
         campaign_info = self.parser.get_campaign_info(campaign_name)
-        if not campaign_info: return {}
+        if not campaign_info:
+            return {}
 
         player_serial = str(campaign_info.get('referencePlayerSerialNumber', ''))
         combat_reports = self.parser.get_combat_reports(campaign_name, player_serial)
@@ -213,9 +207,12 @@ class IL2DataProcessor:
         return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
 
     def _format_date(self, date_str):
-        if not date_str or len(date_str) != 8: return date_str
-        try: return datetime.strptime(date_str, '%Y%m%d').strftime('%d/%m/%Y')
-        except: return date_str
+        if not date_str or len(date_str) != 8:
+            return date_str
+        try:
+            return datetime.strptime(date_str, '%Y%m%d').strftime('%d/%m/%Y')
+        except ValueError:
+            return date_str
 
 
 class IL2PDFGenerator:
@@ -270,8 +267,10 @@ class DataSyncThread(QThread):
         try:
             processor = IL2DataProcessor(self.pwcgfc_path)
             processed_data = processor.process_campaign(self.campaign_name)
-            if processed_data: self.data_loaded.emit(processed_data)
-            else: self.error_occurred.emit("Não foi possível carregar os dados da campanha.")
+            if processed_data:
+                self.data_loaded.emit(processed_data)
+            else:
+                self.error_occurred.emit("Não foi possível carregar os dados da campanha.")
         except Exception as e:
             logger.error(f"Erro na thread de sincronização: {e}")
             self.error_occurred.emit(str(e))
@@ -289,7 +288,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.load_saved_settings()
 
     def setup_ui(self):
-        self.setWindowTitle('IL-2 Campaign Analyzer v1.6')
+        self.setWindowTitle('IL-2 Campaign Analyzer v1.7 (Clean)')
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -372,7 +371,8 @@ class IL2CampaignAnalyzer(QMainWindow):
             self.load_campaigns()
 
     def load_campaigns(self):
-        if not self.pwcgfc_path: return
+        if not self.pwcgfc_path:
+            return
         parser = IL2DataParser(self.pwcgfc_path)
         campaigns = parser.get_campaigns()
         self.campaign_combo.clear()
@@ -449,8 +449,10 @@ class IL2CampaignAnalyzer(QMainWindow):
             file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar Relatório da Missão', default_filename, 'PDF (*.pdf)')
             if file_path:
                 success = self.pdf_generator.generate_mission_report(mission_to_export, file_path)
-                if success: QMessageBox.information(self, "Sucesso", f"Relatório da missão salvo em: {file_path}")
-                else: QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
+                if success:
+                    QMessageBox.information(self, "Sucesso", f"Relatório da missão salvo em: {file_path}")
+                else:
+                    QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
         else:
             QMessageBox.information(self, "Aviso", "Selecione uma missão na tabela para exportar seu relatório detalhado.")
 
