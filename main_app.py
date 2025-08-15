@@ -146,6 +146,9 @@ class IL2DataProcessor:
         for report in combat_reports:
             mission_details = self.parser.get_mission_data(campaign_name, report)
             
+            # Pega a hora incorreta do report como um valor padrão
+            mission_time = report.get('time', 'N/A')
+
             pilots_in_mission = []
             if report.get('haReport'):
                 pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
@@ -154,6 +157,13 @@ class IL2DataProcessor:
             description_text = "Descrição da missão não encontrada."
             if mission_details:
                 description_text = mission_details.get('missionDescription', description_text)
+                
+                # Extrai a hora correta da descrição
+                time_match = re.search(r'Time\s+([0-9]{2}:[0-9]{2}:[0-9]{2})', description_text)
+                if time_match:
+                    mission_time = time_match.group(1) # Sobrescreve com a hora correta
+
+                # Extrai o tempo
                 match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', description_text, re.DOTALL)
                 if match:
                     weather_text = match.group(1).strip()
@@ -165,7 +175,7 @@ class IL2DataProcessor:
 
             mission_entry = {
                 'date': self._format_date(report.get('date', 'N/A')),
-                'time': report.get('time', 'N/A'),
+                'time': mission_time, # <-- Usa a variável que agora contém a hora correta
                 'aircraft': report.get('type', 'N/A'),
                 'duty': report.get('duty', 'N/A'),
                 'airfield': mission_details.get('missionHeader', {}).get('airfield', 'N/A'),
@@ -176,6 +186,7 @@ class IL2DataProcessor:
             missions.append(mission_entry)
         
         return missions, player_squadron_id
+
 
     def _process_squadron_data(self, squadron_personnel):
         squad_members = []
@@ -189,11 +200,14 @@ class IL2DataProcessor:
                 'name': pilot_info.get('name', 'N/A'),
                 'rank': pilot_info.get('rank', 'N/A'),
                 'victories': len(pilot_info.get('victories', [])),
+                'missions_flown': pilot_info.get('missionFlown', 0), # <-- NOVA LINHA AQUI
                 'status': self._get_pilot_status(pilot_info.get('pilotActiveStatus', -1))
             })
 
-        squad_members.sort(key=lambda x: x['victories'], reverse=True)
+        # Ordenar por missões voadas (mais experientes primeiro)
+        squad_members.sort(key=lambda x: x['missions_flown'], reverse=True)
         return squad_members
+
 
     def _get_pilot_status(self, status_code):
         return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
@@ -325,8 +339,9 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.tab_squadron = QWidget()
         squadron_layout = QVBoxLayout(self.tab_squadron)
         self.squadron_table = QTableWidget()
-        self.squadron_table.setColumnCount(4)
-        self.squadron_table.setHorizontalHeaderLabels(["Nome", "Patente", "Abates", "Status"])
+        # --- ALTERAÇÃO AQUI: de 4 para 5 colunas ---
+        self.squadron_table.setColumnCount(5)
+        self.squadron_table.setHorizontalHeaderLabels(["Nome", "Patente", "Abates", "Missões Voadas", "Status"])
         self.squadron_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.squadron_table.setSelectionBehavior(QTableWidget.SelectRows)
         squadron_layout.addWidget(self.squadron_table)
@@ -353,6 +368,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         splitter.setSizes([400, 200])
         missions_layout.addWidget(splitter)
         self.tabs.addTab(self.tab_missions, 'Missões')
+
 
     def select_pwcgfc_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, 'Selecionar Pasta PWCGFC')
@@ -406,42 +422,41 @@ class IL2CampaignAnalyzer(QMainWindow):
         squadron_data = self.current_data.get('squadron', [])
         self.squadron_table.setRowCount(len(squadron_data))
         for row, member in enumerate(squadron_data):
-            # Cria os itens da tabela
             name_item = QTableWidgetItem(member.get('name'))
             rank_item = QTableWidgetItem(member.get('rank'))
             victories_item = QTableWidgetItem(str(member.get('victories')))
+            # --- NOVA LINHA AQUI ---
+            missions_item = QTableWidgetItem(str(member.get('missions_flown')))
             status_item = QTableWidgetItem(member.get('status'))
 
-            # --- CORREÇÃO AQUI: Torna cada item não editável ---
+            # Torna cada item não editável
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
             rank_item.setFlags(rank_item.flags() & ~Qt.ItemIsEditable)
             victories_item.setFlags(victories_item.flags() & ~Qt.ItemIsEditable)
+            missions_item.setFlags(missions_item.flags() & ~Qt.ItemIsEditable) # <-- NOVA LINHA AQUI
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
-            # --- FIM DA CORREÇÃO ---
 
             # Adiciona os itens à tabela
             self.squadron_table.setItem(row, 0, name_item)
             self.squadron_table.setItem(row, 1, rank_item)
             self.squadron_table.setItem(row, 2, victories_item)
-            self.squadron_table.setItem(row, 3, status_item)
+            self.squadron_table.setItem(row, 3, missions_item) # <-- NOVA LINHA AQUI
+            self.squadron_table.setItem(row, 4, status_item)   # <-- Índice da coluna mudou de 3 para 4
 
         missions_data = self.current_data.get('missions', [])
         self.missions_table.setRowCount(len(missions_data))
         for row, mission in enumerate(missions_data):
-            # Cria os itens da tabela
             date_item = QTableWidgetItem(mission.get('date'))
             time_item = QTableWidgetItem(mission.get('time'))
             aircraft_item = QTableWidgetItem(mission.get('aircraft'))
             duty_item = QTableWidgetItem(mission.get('duty'))
 
-            # --- CORREÇÃO AQUI: Torna cada item não editável ---
+            # Torna cada item não editável
             date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
             time_item.setFlags(time_item.flags() & ~Qt.ItemIsEditable)
             aircraft_item.setFlags(aircraft_item.flags() & ~Qt.ItemIsEditable)
             duty_item.setFlags(duty_item.flags() & ~Qt.ItemIsEditable)
-            # --- FIM DA CORREÇÃO ---
 
-            # Adiciona os itens à tabela
             self.missions_table.setItem(row, 0, date_item)
             self.missions_table.setItem(row, 1, time_item)
             self.missions_table.setItem(row, 2, aircraft_item)
