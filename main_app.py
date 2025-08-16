@@ -5,6 +5,7 @@ import sys
 import os
 import json
 import re
+import random 
 import logging
 from datetime import datetime
 from typing import Dict, List, Any
@@ -220,9 +221,8 @@ class IL2DataProcessor:
         except ValueError:
             return date_str
 
-
-class IL2PDFGenerator:
-    """Gera relatórios em PDF para a campanha ou missões específicas."""
+class IL2ReportGenerator:
+    """Gera relatórios em PDF e texto para a campanha ou missões específicas."""
     def __init__(self):
         self.styles = getSampleStyleSheet()
         self.styles['Title'].fontSize = 20
@@ -231,7 +231,8 @@ class IL2PDFGenerator:
         self.styles['Title'].textColor = colors.darkblue
         self.styles.add(ParagraphStyle(name='CustomHeading', parent=self.styles['h2'], fontSize=16, alignment=TA_LEFT, spaceAfter=12, spaceBefore=12, textColor=colors.darkslateblue))
 
-    def generate_mission_report(self, mission_data, output_path):
+    def generate_mission_report_pdf(self, mission_data, output_path):
+        """Gera um relatório em PDF para uma única missão selecionada."""
         doc = SimpleDocTemplate(output_path, pagesize=A4)
         story = []
         story.append(Paragraph(f"Relatório de Missão - {mission_data['date']}", self.styles['Title']))
@@ -243,6 +244,7 @@ class IL2PDFGenerator:
         story.append(Spacer(1, 0.3 * inch))
         story.append(Paragraph("Condições Meteorológicas", self.styles['CustomHeading']))
         story.append(Paragraph(mission_data.get('weather', 'Não disponível.').replace('\n', ''), self.styles['Normal']))  
+
         story.append(Spacer(1, 0.3 * inch))
         story.append(Paragraph("Pilotos na Missão", self.styles['CustomHeading']))
         pilots = mission_data.get('pilots', [])
@@ -258,6 +260,64 @@ class IL2PDFGenerator:
         except Exception as e:
             logger.error(f"Erro ao gerar PDF da missão: {e}")
             return False
+
+    def _gerar_entrada_diario(self, missao: dict, piloto_nome: str) -> str:
+        """Gera uma entrada de diário narrativa para uma única missão."""
+        try:
+            # Tenta formatar a data de forma mais amigável
+            data_obj = datetime.strptime(missao['date'], '%d/%m/%Y')
+            # O import 'locale' pode ser necessário para nomes de meses em português
+            # mas para simplicidade, usaremos o padrão em inglês.
+            data_formatada = data_obj.strftime('%d de %B de %Y')
+        except (ValueError, TypeError):
+            data_formatada = missao['date']
+
+        narrativa = f"**{data_formatada}**\n\n"
+        
+        frases_clima = [
+            f"O dia começou com o tempo {missao.get('weather', 'indefinido').lower()}. Partimos de {missao.get('airfield', 'base desconhecida')} por volta das {missao.get('time', 'hora incerta')}.",
+            f"As condições hoje eram de {missao.get('weather', 'tempo incerto')}. Decolamos de {missao.get('airfield', 'nossa base')} às {missao.get('time', 'hora incerta')}.",
+        ]
+        narrativa += random.choice(frases_clima)
+        narrativa += f" Minha tarefa era uma missão de '{missao.get('duty', 'tipo desconhecido')}' no meu {missao.get('aircraft', 'aeronave')}. "
+        
+        if missao.get('pilots'):
+            # Filtra o nome do próprio piloto da lista de companheiros
+            companheiros = [p.split()[-1] for p in missao['pilots'] if piloto_nome not in p][:3]
+            if companheiros:
+                narrativa += f"Voaram comigo hoje os camaradas {', '.join(companheiros)}. "
+
+        # No futuro, esta seção pode ser expandida para verificar resultados de combate
+        narrativa += "A patrulha ocorreu sem grandes incidentes e retornamos em segurança."
+        
+        narrativa += "\n" + ("-" * 80) + "\n"
+        return narrativa
+
+    def generate_campaign_diary_txt(self, campaign_data: dict) -> str:
+        """Gera o texto completo do diário de bordo a partir dos dados da campanha."""
+        piloto = campaign_data.get('pilot', {})
+        # Garante que as missões estão em ordem cronológica para o diário
+        try:
+            missoes = sorted(campaign_data.get('missions', []), key=lambda m: datetime.strptime(m['date'], '%d/%m/%Y'))
+        except (ValueError, TypeError):
+            missoes = campaign_data.get('missions', []) # Usa a ordem padrão se a data for inválida
+
+        piloto_nome = piloto.get('name', 'N/A')
+
+        diario = "================================================================================\n"
+        diario += "                   DIÁRIO DE BORDO DE CAMPANHA\n"
+        diario += "================================================================================\n\n"
+        diario += f"Piloto: {piloto_nome}\n"
+        diario += f"Esquadrão: {piloto.get('squadron', 'N/A')}\n"
+        if missoes:
+            diario += f"Período da Campanha: {missoes[0]['date']} a {missoes[-1]['date']}\n"
+        diario += "\n================================================================================\n\n"
+
+        for missao in missoes:
+            diario += self._gerar_entrada_diario(missao, piloto_nome)
+            
+        return diario
+
 
 # ===================================================================
 #  4. CLASSES DA APLICAÇÃO (Thread, Janela Principal)
@@ -288,17 +348,19 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.pwcgfc_path = ""
         self.current_data = {}
         self.selected_mission_index = -1
-        self.pdf_generator = IL2PDFGenerator()
+        self.report_generator = IL2ReportGenerator() # <--- CORREÇÃO AQUI
         self.sync_thread = None
         self.setup_ui()
         self.load_saved_settings()
 
     def setup_ui(self):
-        self.setWindowTitle('IL-2 Campaign Analyzer v1.8 (Final)')
+        self.setWindowTitle('IL-2 Campaign Analyzer v2.0 (Final)')
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        
+        # ... (o resto da sua configuração de UI continua igual) ...
         self.path_label = QLabel('Nenhum caminho selecionado')
         main_layout.addWidget(self.path_label)
         select_path_button = QPushButton('Selecionar Pasta PWCGFC')
@@ -315,13 +377,25 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.tabs = QTabWidget()
         self.create_tabs()
         main_layout.addWidget(self.tabs)
+        
+        # --- LAYOUT DE BOTÕES CORRIGIDO ---
         buttons_layout = QHBoxLayout()
         sync_button = QPushButton('Sincronizar Dados')
         sync_button.clicked.connect(self.sync_data)
         buttons_layout.addWidget(sync_button)
-        self.export_button = QPushButton('Exportar Relatório para PDF')
-        self.export_button.clicked.connect(self.export_to_pdf)
-        buttons_layout.addWidget(self.export_button)
+
+        # Botão para o diário de bordo (começa desabilitado)
+        self.diary_button = QPushButton('Gerar Diário de Bordo (.txt)')
+        self.diary_button.clicked.connect(self.export_diary)
+        self.diary_button.setEnabled(False) # Começa desabilitado
+        buttons_layout.addWidget(self.diary_button)
+
+        # Botão para o PDF da missão (começa desabilitado)
+        self.export_pdf_button = QPushButton('Exportar Missão para PDF')
+        self.export_pdf_button.clicked.connect(self.export_mission_pdf)
+        self.export_pdf_button.setEnabled(False) # Começa desabilitado
+        buttons_layout.addWidget(self.export_pdf_button)
+        
         main_layout.addLayout(buttons_layout)
         self.setStatusBar(QStatusBar())
 
@@ -410,10 +484,14 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.statusBar().showMessage("Falha ao carregar dados.", 5000)
 
     def update_ui_with_data(self):
+        # Desabilitar botões no início do update para um estado limpo
+        self.export_pdf_button.setEnabled(False)
+        self.diary_button.setEnabled(False)
+        
         self.selected_mission_index = -1
-        self.export_button.setText("Exportar Relatório para PDF")
         self.mission_details_text.clear()
 
+        # ... (o resto do código de preenchimento das tabelas permanece o mesmo) ...
         pilot_data = self.current_data.get('pilot', {})
         self.pilot_name_label.setText(pilot_data.get('name', 'N/A'))
         self.squadron_name_label.setText(pilot_data.get('squadron', 'N/A'))
@@ -425,23 +503,20 @@ class IL2CampaignAnalyzer(QMainWindow):
             name_item = QTableWidgetItem(member.get('name'))
             rank_item = QTableWidgetItem(member.get('rank'))
             victories_item = QTableWidgetItem(str(member.get('victories')))
-            # --- NOVA LINHA AQUI ---
             missions_item = QTableWidgetItem(str(member.get('missions_flown')))
             status_item = QTableWidgetItem(member.get('status'))
 
-            # Torna cada item não editável
             name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
             rank_item.setFlags(rank_item.flags() & ~Qt.ItemIsEditable)
             victories_item.setFlags(victories_item.flags() & ~Qt.ItemIsEditable)
-            missions_item.setFlags(missions_item.flags() & ~Qt.ItemIsEditable) # <-- NOVA LINHA AQUI
+            missions_item.setFlags(missions_item.flags() & ~Qt.ItemIsEditable)
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
 
-            # Adiciona os itens à tabela
             self.squadron_table.setItem(row, 0, name_item)
             self.squadron_table.setItem(row, 1, rank_item)
             self.squadron_table.setItem(row, 2, victories_item)
-            self.squadron_table.setItem(row, 3, missions_item) # <-- NOVA LINHA AQUI
-            self.squadron_table.setItem(row, 4, status_item)   # <-- Índice da coluna mudou de 3 para 4
+            self.squadron_table.setItem(row, 3, missions_item)
+            self.squadron_table.setItem(row, 4, status_item)
 
         missions_data = self.current_data.get('missions', [])
         self.missions_table.setRowCount(len(missions_data))
@@ -451,7 +526,6 @@ class IL2CampaignAnalyzer(QMainWindow):
             aircraft_item = QTableWidgetItem(mission.get('aircraft'))
             duty_item = QTableWidgetItem(mission.get('duty'))
 
-            # Torna cada item não editável
             date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
             time_item.setFlags(time_item.flags() & ~Qt.ItemIsEditable)
             aircraft_item.setFlags(aircraft_item.flags() & ~Qt.ItemIsEditable)
@@ -461,19 +535,26 @@ class IL2CampaignAnalyzer(QMainWindow):
             self.missions_table.setItem(row, 1, time_item)
             self.missions_table.setItem(row, 2, aircraft_item)
             self.missions_table.setItem(row, 3, duty_item)
+            
+        # Habilita o botão do diário se os dados foram carregados com sucesso
+        if self.current_data:
+            self.diary_button.setEnabled(True)
 
 
     def on_mission_selected(self):
         selected_items = self.missions_table.selectedItems()
         if selected_items:
             self.selected_mission_index = selected_items[0].row()
-            self.export_button.setText(f"Exportar Missão de {self.missions_table.item(self.selected_mission_index, 0).text()} para PDF")
+            # Habilita o botão de exportar PDF da missão
+            self.export_pdf_button.setEnabled(True)
             mission_data = self.current_data['missions'][self.selected_mission_index]
             self.mission_details_text.setText(mission_data.get('description', ''))
         else:
             self.selected_mission_index = -1
-            self.export_button.setText("Exportar Relatório para PDF")
+            # Desabilita o botão se nenhuma missão estiver selecionada
+            self.export_pdf_button.setEnabled(False)
             self.mission_details_text.clear()
+
 
     def export_to_pdf(self):
         if not self.current_data:
@@ -491,6 +572,46 @@ class IL2CampaignAnalyzer(QMainWindow):
                     QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
         else:
             QMessageBox.information(self, "Aviso", "Selecione uma missão na tabela para exportar seu relatório detalhado.")
+            
+    def export_diary(self):
+        """Função para gerar e salvar o diário de bordo."""
+        if not self.current_data:
+            QMessageBox.warning(self, "Aviso", "Sincronize os dados de uma campanha primeiro!")
+            return
+
+        # Gera o conteúdo do diário usando o report_generator
+        diary_content = self.report_generator.generate_campaign_diary_txt(self.current_data)
+        
+        # Pede ao usuário para salvar o arquivo
+        pilot_name = self.current_data.get('pilot', {}).get('name', 'Piloto').replace(' ', '_')
+        default_filename = f"Diario_de_Bordo_{pilot_name}.txt"
+        file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar Diário de Bordo', default_filename, 'Text Files (*.txt);;All Files (*)')
+
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(diary_content)
+                QMessageBox.information(self, "Sucesso", f"Diário de bordo salvo em: {file_path}")
+            except IOError as e:
+                QMessageBox.critical(self, "Erro", f"Não foi possível salvar o arquivo do diário: {e}")
+                
+    def export_mission_pdf(self):
+        """Função para exportar os dados da missão selecionada para PDF."""
+        if self.selected_mission_index == -1:
+            QMessageBox.warning(self, "Aviso", "Selecione uma missão na tabela para exportar.")
+            return
+            
+        mission_to_export = self.current_data['missions'][self.selected_mission_index]
+        default_filename = f"Missao_{mission_to_export['date'].replace('/', '-')}.pdf"
+        file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar Relatório da Missão', default_filename, 'PDF (*.pdf)')
+        
+        if file_path:
+            # Usa o report_generator para criar o PDF
+            success = self.report_generator.generate_mission_report_pdf(mission_to_export, file_path)
+            if success:
+                QMessageBox.information(self, "Sucesso", f"Relatório da missão salvo em: {file_path}")
+            else:
+                QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
 
     def load_saved_settings(self):
         saved_path = self.settings.value('pwcgfc_path', '')
