@@ -10,13 +10,14 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
-
+from PIL import Image, ImageDraw, ImageFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit, 
     QFormLayout, QGroupBox, QComboBox, QMessageBox, QTableWidget, 
     QTableWidgetItem, QHeaderView, QProgressBar, QStatusBar, QSplitter
 )
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -222,7 +223,7 @@ class IL2DataProcessor:
             return date_str
 
 class IL2ReportGenerator:
-    """Gera relatórios em PDF e texto para a campanha ou missões específicas."""
+    """Gera relatórios em PDF, texto e imagens de mapa."""
     def __init__(self):
         self.styles = getSampleStyleSheet()
         self.styles['Title'].fontSize = 20
@@ -230,9 +231,77 @@ class IL2ReportGenerator:
         self.styles['Title'].spaceAfter = 20
         self.styles['Title'].textColor = colors.darkblue
         self.styles.add(ParagraphStyle(name='CustomHeading', parent=self.styles['h2'], fontSize=16, alignment=TA_LEFT, spaceAfter=12, spaceBefore=12, textColor=colors.darkslateblue))
+        
+        self.map_coordinates = self._load_map_coordinates()
 
-    def generate_mission_report_pdf(self, mission_data, output_path):
-        """Gera um relatório em PDF para uma única missão selecionada."""
+    def _load_map_coordinates(self):
+        """Carrega o dicionário de coordenadas do arquivo JSON."""
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            coords_path = os.path.join(script_dir, "coordenadas_mapa_final_calibrado.json")
+            with open(coords_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            logger.error("Arquivo 'coordenadas_mapa_final_calibrado.json' não encontrado!")
+            return {}
+        except Exception as e:
+            logger.error(f"Erro ao carregar coordenadas do mapa: {e}")
+            return {}
+        
+    def gerar_mapa_de_carreira(self, missoes: list, output_path: str, highlight_mission_index: int = -1):
+        """
+        Gera a imagem do mapa.
+        Se highlight_mission_index for -1, desenha a rota completa.
+        Se for um número, destaca apenas a missão naquele índice.
+        """
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        mapa_base_path = os.path.join(script_dir, "mapa_base.jpg")
+    
+        if not os.path.exists(mapa_base_path) or not self.map_coordinates:
+            return False
+        
+        try:
+            img = Image.open(mapa_base_path).convert("RGB")
+            draw = ImageDraw.Draw(img)
+            font = ImageFont.truetype("arial.ttf", 40)
+            
+            if highlight_mission_index != -1 and highlight_mission_index < len(missoes):
+                missao = missoes[highlight_mission_index]
+                localidade = missao.get('locality')
+                if localidade in self.map_coordinates:
+                    ponto = self.map_coordinates[localidade]
+                    raio = 30
+                    draw.ellipse((ponto[0] - raio, ponto[1] - raio, ponto[0] + raio, ponto[1] + raio), outline="yellow", width=5)
+                    draw.ellipse((ponto[0] - raio*2, ponto[1] - raio*2, ponto[0] + raio*2, ponto[1] + raio*2), outline="yellow", width=2)
+                    draw.text((ponto[0] + 40, ponto[1]), f"<- {localidade}", font=font, fill="yellow", stroke_width=2, stroke_fill="black")
+            else:
+                ponto_anterior = None
+                for i, missao in enumerate(missoes):
+                    localidade = missao.get('locality')
+                    if localidade in self.map_coordinates:
+                        ponto_atual = self.map_coordinates[localidade]
+                        if ponto_anterior:
+                            draw.line([ponto_anterior, ponto_atual], fill="yellow", width=5)
+                        raio = 15
+                        draw.ellipse((ponto_atual[0] - raio, ponto_atual[1] - raio, ponto_atual[0] + raio, ponto_atual[1] + raio), fill="#FF0000", outline="black", width=3)
+                        draw.text((ponto_atual[0] + 25, ponto_atual[1] - 25), str(i + 1), font=font, fill="white", stroke_width=2, stroke_fill="black")
+                        ponto_anterior = ponto_atual
+            
+            img.save(output_path)
+            return True
+        except Exception as e:
+            logger.error(f"Falha ao gerar imagem do mapa: {e}")
+            return False
+    
+    def generate_mission_report_pdf(self, mission_data, all_missions, mission_index, output_path):
+        """Gera um relatório em PDF para uma única missão, incluindo um mini-mapa."""
+        mini_map_path = "mini_mapa_temp.png"
+        map_success = self.gerar_mapa_de_carreira(
+            missoes=all_missions,
+            output_path=mini_map_path,
+            highlight_mission_index=mission_index
+        )
+        
         doc = SimpleDocTemplate(output_path, pagesize=A4)
         story = []
         story.append(Paragraph(f"Relatório de Missão - {mission_data['date']}", self.styles['Title']))
@@ -244,9 +313,9 @@ class IL2ReportGenerator:
         story.append(Spacer(1, 0.3 * inch))
         story.append(Paragraph("Condições Meteorológicas", self.styles['CustomHeading']))
         story.append(Paragraph(mission_data.get('weather', 'Não disponível.').replace('\n', ''), self.styles['Normal']))  
-
         story.append(Spacer(1, 0.3 * inch))
         story.append(Paragraph("Pilotos na Missão", self.styles['CustomHeading']))
+        
         pilots = mission_data.get('pilots', [])
         if pilots:
             list_style = ParagraphStyle(name='list', parent=self.styles['Normal'], leftIndent=15)
@@ -254,8 +323,25 @@ class IL2ReportGenerator:
             story.extend(pilot_list)
         else:
             story.append(Paragraph("Lista de pilotos não disponível no relatório.", self.styles['Normal']))
+
+        if map_success and os.path.exists(mini_map_path):
+            story.append(Spacer(1, 0.3 * inch))
+            story.append(Paragraph("Localização da Missão", self.styles['CustomHeading']))
+            
+            # Importa as classes do ReportLab necessárias aqui para evitar conflito
+            from reportlab.platypus import Image as ReportLabImage
+            from reportlab.lib.utils import ImageReader
+
+            img = ImageReader(mini_map_path)
+            img_width, img_height = img.getSize()
+            aspect = img_height / float(img_width)
+            display_width = 6 * inch
+            story.append(ReportLabImage(mini_map_path, width=display_width, height=(display_width * aspect)))
+
         try:
             doc.build(story)
+            if os.path.exists(mini_map_path):
+                os.remove(mini_map_path)
             return True
         except Exception as e:
             logger.error(f"Erro ao gerar PDF da missão: {e}")
@@ -264,59 +350,44 @@ class IL2ReportGenerator:
     def _gerar_entrada_diario(self, missao: dict, piloto_nome: str) -> str:
         """Gera uma entrada de diário narrativa para uma única missão."""
         try:
-            # Tenta formatar a data de forma mais amigável
             data_obj = datetime.strptime(missao['date'], '%d/%m/%Y')
-            # O import 'locale' pode ser necessário para nomes de meses em português
-            # mas para simplicidade, usaremos o padrão em inglês.
             data_formatada = data_obj.strftime('%d de %B de %Y')
         except (ValueError, TypeError):
             data_formatada = missao['date']
-
         narrativa = f"**{data_formatada}**\n\n"
-        
         frases_clima = [
             f"O dia começou com o tempo {missao.get('weather', 'indefinido').lower()}. Partimos de {missao.get('airfield', 'base desconhecida')} por volta das {missao.get('time', 'hora incerta')}.",
             f"As condições hoje eram de {missao.get('weather', 'tempo incerto')}. Decolamos de {missao.get('airfield', 'nossa base')} às {missao.get('time', 'hora incerta')}.",
         ]
         narrativa += random.choice(frases_clima)
         narrativa += f" Minha tarefa era uma missão de '{missao.get('duty', 'tipo desconhecido')}' no meu {missao.get('aircraft', 'aeronave')}. "
-        
         if missao.get('pilots'):
-            # Filtra o nome do próprio piloto da lista de companheiros
             companheiros = [p.split()[-1] for p in missao['pilots'] if piloto_nome not in p][:3]
             if companheiros:
                 narrativa += f"Voaram comigo hoje os camaradas {', '.join(companheiros)}. "
-
-        # No futuro, esta seção pode ser expandida para verificar resultados de combate
         narrativa += "A patrulha ocorreu sem grandes incidentes e retornamos em segurança."
-        
         narrativa += "\n" + ("-" * 80) + "\n"
         return narrativa
 
     def generate_campaign_diary_txt(self, campaign_data: dict) -> str:
         """Gera o texto completo do diário de bordo a partir dos dados da campanha."""
         piloto = campaign_data.get('pilot', {})
-        # Garante que as missões estão em ordem cronológica para o diário
         try:
             missoes = sorted(campaign_data.get('missions', []), key=lambda m: datetime.strptime(m['date'], '%d/%m/%Y'))
         except (ValueError, TypeError):
-            missoes = campaign_data.get('missions', []) # Usa a ordem padrão se a data for inválida
-
-        piloto_nome = piloto.get('name', 'N/A')
-
-        diario = "================================================================================\n"
-        diario += "                   DIÁRIO DE BORDO DE CAMPANHA\n"
-        diario += "================================================================================\n\n"
-        diario += f"Piloto: {piloto_nome}\n"
-        diario += f"Esquadrão: {piloto.get('squadron', 'N/A')}\n"
-        if missoes:
-            diario += f"Período da Campanha: {missoes[0]['date']} a {missoes[-1]['date']}\n"
-        diario += "\n================================================================================\n\n"
-
-        for missao in missoes:
-            diario += self._gerar_entrada_diario(missao, piloto_nome)
-            
-        return diario
+            missoes = campaign_data.get('missions', [])
+            piloto_nome = piloto.get('name', 'N/A')
+            diario = "================================================================================\n"
+            diario += "                   DIÁRIO DE BORDO DE CAMPANHA\n"
+            diario += "================================================================================\n\n"
+            diario += f"Piloto: {piloto_nome}\n"
+            diario += f"Esquadrão: {piloto.get('squadron', 'N/A')}\n"
+            if missoes:
+                diario += f"Período da Campanha: {missoes[0]['date']} a {missoes[-1]['date']}\n"
+                diario += "\n================================================================================\n\n"
+            for missao in missoes:
+                    diario += self._gerar_entrada_diario(missao, piloto_nome)
+            return diario
 
 
 # ===================================================================
@@ -348,11 +419,11 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.pwcgfc_path = ""
         self.current_data = {}
         self.selected_mission_index = -1
-        self.report_generator = IL2ReportGenerator() # <--- CORREÇÃO AQUI
+        self.report_generator = IL2ReportGenerator()
         self.sync_thread = None
         self.setup_ui()
         self.load_saved_settings()
-
+        
     def setup_ui(self):
         self.setWindowTitle('IL-2 Campaign Analyzer v2.0 (Final)')
         self.setGeometry(100, 100, 1200, 800)
@@ -442,6 +513,12 @@ class IL2CampaignAnalyzer(QMainWindow):
         splitter.setSizes([400, 200])
         missions_layout.addWidget(splitter)
         self.tabs.addTab(self.tab_missions, 'Missões')
+        self.tab_map = QWidget()
+        map_layout = QVBoxLayout(self.tab_map)
+        self.map_label = QLabel("Sincronize os dados de uma campanha para ver o mapa.")
+        self.map_label.setAlignment(Qt.AlignCenter)
+        map_layout.addWidget(self.map_label)
+        self.tabs.addTab(self.tab_map, "Mapa da Carreira")
 
 
     def select_pwcgfc_folder(self):
@@ -477,6 +554,28 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.update_ui_with_data()
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage("Dados carregados com sucesso!", 5000)
+
+        # --- LÓGICA PARA GERAR E EXIBIR O MAPA ---
+        self.map_label.setText("Gerando mapa de carreira...")
+        QApplication.processEvents() # Força a UI a atualizar a mensagem
+
+        map_output_path = "Mapa_de_Carreira_Gerado.png"
+        success = self.report_generator.gerar_mapa_de_carreira(
+            self.current_data.get('missions', []),
+            map_output_path
+        )
+
+        if success and os.path.exists(map_output_path):
+            pixmap = QPixmap(map_output_path)
+            # Redimensiona o pixmap para caber na label, mantendo a proporção
+            self.map_label.setPixmap(pixmap.scaled(
+                self.map_label.size(), 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            ))
+        else:
+            self.map_label.setText("Não foi possível gerar o mapa de carreira.")
+        
 
     def on_sync_error(self, error_message):
         self.progress_bar.setVisible(False)
@@ -579,10 +678,8 @@ class IL2CampaignAnalyzer(QMainWindow):
             QMessageBox.warning(self, "Aviso", "Sincronize os dados de uma campanha primeiro!")
             return
 
-        # Gera o conteúdo do diário usando o report_generator
         diary_content = self.report_generator.generate_campaign_diary_txt(self.current_data)
         
-        # Pede ao usuário para salvar o arquivo
         pilot_name = self.current_data.get('pilot', {}).get('name', 'Piloto').replace(' ', '_')
         default_filename = f"Diario_de_Bordo_{pilot_name}.txt"
         file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar Diário de Bordo', default_filename, 'Text Files (*.txt);;All Files (*)')
@@ -596,24 +693,29 @@ class IL2CampaignAnalyzer(QMainWindow):
                 QMessageBox.critical(self, "Erro", f"Não foi possível salvar o arquivo do diário: {e}")
                 
     def export_mission_pdf(self):
-        """Função para exportar os dados da missão selecionada para PDF."""
+        """Gera e salva o relatório em PDF para a missão selecionada."""
         if self.selected_mission_index == -1:
             QMessageBox.warning(self, "Aviso", "Selecione uma missão na tabela para exportar.")
             return
-            
+        
         mission_to_export = self.current_data['missions'][self.selected_mission_index]
         default_filename = f"Missao_{mission_to_export['date'].replace('/', '-')}.pdf"
         file_path, _ = QFileDialog.getSaveFileName(self, 'Salvar Relatório da Missão', default_filename, 'PDF (*.pdf)')
         
         if file_path:
-            # Usa o report_generator para criar o PDF
-            success = self.report_generator.generate_mission_report_pdf(mission_to_export, file_path)
+            success = self.report_generator.generate_mission_report_pdf(
+                mission_data=mission_to_export,
+                all_missions=self.current_data['missions'],
+                mission_index=self.selected_mission_index,
+                output_path=file_path
+            )
             if success:
                 QMessageBox.information(self, "Sucesso", f"Relatório da missão salvo em: {file_path}")
             else:
                 QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
 
     def load_saved_settings(self):
+        saved_path = self.settings.value('pwcgfc_path', '')
         saved_path = self.settings.value('pwcgfc_path', '')
         if saved_path and os.path.exists(saved_path):
             self.pwcgfc_path = saved_path
