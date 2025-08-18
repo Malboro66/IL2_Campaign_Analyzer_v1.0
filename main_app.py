@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit, 
     QFormLayout, QGroupBox, QComboBox, QMessageBox, QTableWidget, 
-    QTableWidgetItem, QHeaderView, QProgressBar, QStatusBar, QSplitter
+    QTableWidgetItem, QHeaderView, QProgressBar, QStatusBar, QSplitter,QScrollArea
 )
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal
@@ -123,9 +123,12 @@ class IL2DataProcessor:
         
         pilot_data = self._process_pilot_data(campaign_info, combat_reports)
         
-        # Carrega os dados do esquadrão usando o ID encontrado
-        squadron_personnel = self.parser.get_squadron_personnel(campaign_name, player_squadron_id)
-        squadron_data = self._process_squadron_data(squadron_personnel)
+        if player_squadron_id:
+            squadron_personnel = self.parser.get_squadron_personnel(campaign_name, player_squadron_id)
+            squadron_data = self._process_squadron_data(squadron_personnel)
+        else:
+            squadron_data = []
+            logger.warning("Não foi possível determinar o squadronId do jogador. A aba de esquadrão ficará vazia.")
 
         return {
             'pilot': pilot_data,
@@ -146,11 +149,9 @@ class IL2DataProcessor:
         player_squadron_id = None
 
         for report in combat_reports:
+            # --- LÓGICA MOVIDA PARA DENTRO DO LOOP ---
             mission_details = self.parser.get_mission_data(campaign_name, report)
-            
-            # Pega a hora incorreta do report como um valor padrão
             mission_time = report.get('time', 'N/A')
-
             pilots_in_mission = []
             if report.get('haReport'):
                 pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
@@ -159,17 +160,12 @@ class IL2DataProcessor:
             description_text = "Descrição da missão não encontrada."
             if mission_details:
                 description_text = mission_details.get('missionDescription', description_text)
-                
-                # Extrai a hora correta da descrição
                 time_match = re.search(r'Time\s+([0-9]{2}:[0-9]{2}:[0-9]{2})', description_text)
                 if time_match:
-                    mission_time = time_match.group(1) # Sobrescreve com a hora correta
-
-                # Extrai o tempo
+                    mission_time = time_match.group(1)
                 match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', description_text, re.DOTALL)
                 if match:
                     weather_text = match.group(1).strip()
-                
                 if not player_squadron_id:
                     mission_planes = mission_details.get('missionPlanes', {})
                     if player_serial in mission_planes:
@@ -177,9 +173,10 @@ class IL2DataProcessor:
 
             mission_entry = {
                 'date': self._format_date(report.get('date', 'N/A')),
-                'time': mission_time, # <-- Usa a variável que agora contém a hora correta
+                'time': mission_time,
                 'aircraft': report.get('type', 'N/A'),
                 'duty': report.get('duty', 'N/A'),
+                'locality': report.get('locality', 'N/A'),
                 'airfield': mission_details.get('missionHeader', {}).get('airfield', 'N/A'),
                 'pilots': pilots_in_mission,
                 'weather': weather_text,
@@ -189,6 +186,54 @@ class IL2DataProcessor:
         
         return missions, player_squadron_id
 
+    def _process_pilot_data(self, campaign_info, combat_reports):
+        return {
+            'name': campaign_info.get('name', 'N/A'),
+            'squadron': combat_reports[0].get('squadron', 'N/A') if combat_reports else 'N/A',
+            'total_missions': len(combat_reports),
+            'campaign_date': self._format_date(campaign_info.get('date', 'N/A')),
+        }
+
+    def _process_missions_data(self, campaign_name, combat_reports, player_serial):
+        missions = []
+        player_squadron_id = None
+
+        for report in combat_reports:
+            mission_details = self.parser.get_mission_data(campaign_name, report)
+            mission_time = report.get('time', 'N/A')
+            pilots_in_mission = []
+        if report.get('haReport'):
+            pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
+
+        weather_text = "Não disponível"
+        description_text = "Descrição da missão não encontrada."
+        if mission_details:
+            description_text = mission_details.get('missionDescription', description_text)
+            time_match = re.search(r'Time\s+([0-9]{2}:[0-9]{2}:[0-9]{2})', description_text)
+            if time_match:
+                mission_time = time_match.group(1)
+            match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', description_text, re.DOTALL)
+            if match:
+                weather_text = match.group(1).strip()
+            if not player_squadron_id:
+                mission_planes = mission_details.get('missionPlanes', {})
+                if player_serial in mission_planes:
+                    player_squadron_id = mission_planes[player_serial].get('squadronId')
+
+        mission_entry = {
+            'date': self._format_date(report.get('date', 'N/A')),
+            'time': mission_time,
+            'aircraft': report.get('type', 'N/A'),
+            'duty': report.get('duty', 'N/A'),
+            'locality': report.get('locality', 'N/A'), # <-- GARANTIR QUE ESTÁ AQUI
+            'airfield': mission_details.get('missionHeader', {}).get('airfield', 'N/A'),
+            'pilots': pilots_in_mission,
+            'weather': weather_text,
+            'description': description_text,
+        }
+        missions.append(mission_entry)
+    
+        return missions, player_squadron_id
 
     def _process_squadron_data(self, squadron_personnel):
         squad_members = []
@@ -209,7 +254,6 @@ class IL2DataProcessor:
         # Ordenar por missões voadas (mais experientes primeiro)
         squad_members.sort(key=lambda x: x['missions_flown'], reverse=True)
         return squad_members
-
 
     def _get_pilot_status(self, status_code):
         return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
@@ -388,8 +432,7 @@ class IL2ReportGenerator:
             for missao in missoes:
                     diario += self._gerar_entrada_diario(missao, piloto_nome)
             return diario
-
-
+  
 # ===================================================================
 #  4. CLASSES DA APLICAÇÃO (Thread, Janela Principal)
 # ===================================================================
@@ -411,7 +454,62 @@ class DataSyncThread(QThread):
         except Exception as e:
             logger.error(f"Erro na thread de sincronização: {e}")
             self.error_occurred.emit(str(e))
+            
+class MapViewer(QScrollArea):
+    """
+    Um widget que exibe uma imagem com suporte a zoom e barras de rolagem.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.zoom_factor = 1.0
+        self._pixmap = QPixmap()
 
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.setWidget(self.image_label)
+        self.setWidgetResizable(True)
+
+    def set_pixmap(self, pixmap):
+        """Define o pixmap original e ajusta a exibição inicial."""
+        self._pixmap = pixmap
+        self.fit_to_view() # <-- CHAMA A NOVA FUNÇÃO
+
+    def fit_to_view(self):
+        """Ajusta o zoom para que a imagem inteira caiba na área visível."""
+        if self._pixmap.isNull():
+            return
+        
+        # Obtém o tamanho da área de rolagem (a viewport)
+        view_size = self.viewport().size()
+        pixmap_size = self._pixmap.size()
+        
+        # Calcula o fator de zoom para largura e altura
+        width_ratio = view_size.width() / pixmap_size.width()
+        height_ratio = view_size.height() / pixmap_size.height()
+        
+        # Usa o menor fator para garantir que a imagem inteira caiba
+        self.zoom_factor = min(width_ratio, height_ratio)
+        self.update_zoom()
+
+    def wheelEvent(self, event):
+        """Captura o evento da roda do mouse para aplicar zoom."""
+        if event.angleDelta().y() > 0:
+            self.zoom_factor *= 1.25
+        else:
+            self.zoom_factor /= 1.25
+        
+        self.zoom_factor = max(0.1, min(self.zoom_factor, 10.0))
+        self.update_zoom()
+
+    def update_zoom(self):
+        """Aplica o fator de zoom redimensionando a QLabel interna."""
+        if not self._pixmap.isNull():
+            # Desativa o resizable para que as barras de rolagem funcionem
+            self.setWidgetResizable(False)
+            scaled_pixmap = self._pixmap.scaled(self._pixmap.size() * self.zoom_factor, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.image_label.setPixmap(scaled_pixmap)
+            self.image_label.adjustSize() # Ajusta o tamanho da label para o da imagem com zoom
+          
 class IL2CampaignAnalyzer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -425,7 +523,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.load_saved_settings()
         
     def setup_ui(self):
-        self.setWindowTitle('IL-2 Campaign Analyzer v2.0 (Final)')
+        self.setWindowTitle('IL-2 Campaign Analyzer v0.3')
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -515,9 +613,9 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.tabs.addTab(self.tab_missions, 'Missões')
         self.tab_map = QWidget()
         map_layout = QVBoxLayout(self.tab_map)
-        self.map_label = QLabel("Sincronize os dados de uma campanha para ver o mapa.")
-        self.map_label.setAlignment(Qt.AlignCenter)
-        map_layout.addWidget(self.map_label)
+        # Usa a nova classe MapViewer
+        self.map_viewer = MapViewer()
+        map_layout.addWidget(self.map_viewer)
         self.tabs.addTab(self.tab_map, "Mapa da Carreira")
 
 
@@ -550,32 +648,29 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.sync_thread.start()
 
     def on_data_loaded(self, data):
+        """Chamado quando os dados da campanha são carregados com sucesso."""
         self.current_data = data
         self.update_ui_with_data()
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage("Dados carregados com sucesso!", 5000)
 
-        # --- LÓGICA PARA GERAR E EXIBIR O MAPA ---
-        self.map_label.setText("Gerando mapa de carreira...")
-        QApplication.processEvents() # Força a UI a atualizar a mensagem
+    # --- LÓGICA ATUALIZADA PARA GERAR E EXIBIR O MAPA ---
+    # O MapViewer não tem um método setText, então não mostramos a mensagem aqui.
+    # Poderíamos adicionar uma label de status se quiséssemos.
+        QApplication.processEvents()
 
         map_output_path = "Mapa_de_Carreira_Gerado.png"
         success = self.report_generator.gerar_mapa_de_carreira(
             self.current_data.get('missions', []),
             map_output_path
-        )
+    )
 
-        if success and os.path.exists(map_output_path):
-            pixmap = QPixmap(map_output_path)
-            # Redimensiona o pixmap para caber na label, mantendo a proporção
-            self.map_label.setPixmap(pixmap.scaled(
-                self.map_label.size(), 
-                Qt.KeepAspectRatio, 
-                Qt.SmoothTransformation
-            ))
+        if  success and os.path.exists(map_output_path):
+        # Usa o método set_pixmap do nosso novo MapViewer
+            self.map_viewer.set_pixmap(QPixmap(map_output_path))
         else:
-            self.map_label.setText("Não foi possível gerar o mapa de carreira.")
-        
+        # Se falhar, podemos mostrar uma mensagem na label interna do MapViewer
+            self.map_viewer.image_label.setText("Não foi possível gerar o mapa de carreira.")
 
     def on_sync_error(self, error_message):
         self.progress_bar.setVisible(False)
