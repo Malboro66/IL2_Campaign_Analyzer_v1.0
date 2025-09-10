@@ -61,6 +61,11 @@ class IL2DataParser:
     def get_campaign_info(self, campaign_name: str) -> Dict:
         return self.get_json_data(self.campaigns_path / campaign_name / 'Campaign.json') or {}
 
+    def get_campaign_aces(self, campaign_name: str) -> List[Dict]:
+        """Carrega o arquivo de ases da campanha específica."""
+        aces_path = self.campaigns_path / campaign_name / 'CampaignAces.json'
+        return self.get_json_data(aces_path) or []
+
     def get_squadron_personnel(self, campaign_name: str, squadron_id: int) -> Dict:
         """Carrega o arquivo de pessoal do esquadrão específico."""
         personnel_path = self.campaigns_path / campaign_name / 'Personnel' / f'{squadron_id}.json'
@@ -73,8 +78,10 @@ class IL2DataParser:
         reports = []
         for report_file in sorted(reports_path.glob('*.json'), reverse=True):
             report_data = self.get_json_data(report_file)
-            if report_data:
+            if isinstance(report_data, dict):
                 reports.append(report_data)
+            else:
+                logger.warning(f"Dados de relatório inválidos encontrados em {report_file}: {report_data}")
         return reports
 
     def get_mission_data(self, campaign_name: str, report: Dict) -> Dict:
@@ -130,31 +137,33 @@ class IL2DataProcessor:
             squadron_data = []
             logger.warning("Não foi possível determinar o squadronId do jogador. A aba de esquadrão ficará vazia.")
 
+        aces_data = self._process_aces_data(self.parser.get_campaign_aces(campaign_name))
+
         return {
             'pilot': pilot_data,
             'missions': missions_data,
-            'squadron': squadron_data
+            'squadron': squadron_data,
+            'aces': aces_data
         }
 
-    def _process_pilot_data(self, campaign_info, combat_reports):
-        return {
-            'name': campaign_info.get('name', 'N/A'),
-            'squadron': combat_reports[0].get('squadron', 'N/A') if combat_reports else 'N/A',
-            'total_missions': len(combat_reports),
-            'campaign_date': self._format_date(campaign_info.get('date', 'N/A')),
-        }
+
 
     def _process_missions_data(self, campaign_name, combat_reports, player_serial):
         missions = []
         player_squadron_id = None
 
         for report in combat_reports:
+            if not isinstance(report, dict):
+                logger.warning(f"Relatório inválido encontrado: {report}. Pulando.")
+                continue
             # --- LÓGICA MOVIDA PARA DENTRO DO LOOP ---
             mission_details = self.parser.get_mission_data(campaign_name, report)
-            mission_time = report.get('time', 'N/A')
+            mission_time = report.get("time", "N/A")
             pilots_in_mission = []
-            if report.get('haReport'):
-                pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
+            if report and report.get("haReport"):
+                pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\\s+.*', report['haReport'], re.MULTILINE)
+
+
 
             weather_text = "Não disponível"
             description_text = "Descrição da missão não encontrada."
@@ -186,54 +195,7 @@ class IL2DataProcessor:
         
         return missions, player_squadron_id
 
-    def _process_pilot_data(self, campaign_info, combat_reports):
-        return {
-            'name': campaign_info.get('name', 'N/A'),
-            'squadron': combat_reports[0].get('squadron', 'N/A') if combat_reports else 'N/A',
-            'total_missions': len(combat_reports),
-            'campaign_date': self._format_date(campaign_info.get('date', 'N/A')),
-        }
 
-    def _process_missions_data(self, campaign_name, combat_reports, player_serial):
-        missions = []
-        player_squadron_id = None
-
-        for report in combat_reports:
-            mission_details = self.parser.get_mission_data(campaign_name, report)
-            mission_time = report.get('time', 'N/A')
-            pilots_in_mission = []
-        if report.get('haReport'):
-            pilots_in_mission = re.findall(r'^(?:Ltn|Fw|Obltn|Cne|S/Lt|Sergt)\s+.*', report['haReport'], re.MULTILINE)
-
-        weather_text = "Não disponível"
-        description_text = "Descrição da missão não encontrada."
-        if mission_details:
-            description_text = mission_details.get('missionDescription', description_text)
-            time_match = re.search(r'Time\s+([0-9]{2}:[0-9]{2}:[0-9]{2})', description_text)
-            if time_match:
-                mission_time = time_match.group(1)
-            match = re.search(r'Weather Report\s*\n(.*?)\n\nPrimary Objective', description_text, re.DOTALL)
-            if match:
-                weather_text = match.group(1).strip()
-            if not player_squadron_id:
-                mission_planes = mission_details.get('missionPlanes', {})
-                if player_serial in mission_planes:
-                    player_squadron_id = mission_planes[player_serial].get('squadronId')
-
-        mission_entry = {
-            'date': self._format_date(report.get('date', 'N/A')),
-            'time': mission_time,
-            'aircraft': report.get('type', 'N/A'),
-            'duty': report.get('duty', 'N/A'),
-            'locality': report.get('locality', 'N/A'), # <-- GARANTIR QUE ESTÁ AQUI
-            'airfield': mission_details.get('missionHeader', {}).get('airfield', 'N/A'),
-            'pilots': pilots_in_mission,
-            'weather': weather_text,
-            'description': description_text,
-        }
-        missions.append(mission_entry)
-    
-        return missions, player_squadron_id
 
     def _process_squadron_data(self, squadron_personnel):
         squad_members = []
@@ -257,6 +219,17 @@ class IL2DataProcessor:
 
     def _get_pilot_status(self, status_code):
         return {0: "Ativo", 1: "Ativo", 2: "Morto em Combate (KIA)", 3: "Gravemente Ferido (WIA)", 4: "Capturado (POW)", 5: "Desaparecido em Combate (MIA)"}.get(status_code, "Desconhecido")
+
+    def _process_aces_data(self, aces_raw_data: List[Dict]) -> List[Dict]:
+        aces = []
+        for ace in aces_raw_data:
+            aces.append({
+                'name': ace.get('name', 'N/A'),
+                'victories': ace.get('victories', 0)
+            })
+        # Ordenar por vitórias (maior número de abates primeiro)
+        aces.sort(key=lambda x: x['victories'], reverse=True)
+        return aces
 
     def _format_date(self, date_str):
         if not date_str or len(date_str) != 8:
@@ -618,6 +591,15 @@ class IL2CampaignAnalyzer(QMainWindow):
         map_layout.addWidget(self.map_viewer)
         self.tabs.addTab(self.tab_map, "Mapa da Carreira")
 
+        self.tab_aces = QWidget()
+        aces_layout = QVBoxLayout(self.tab_aces)
+        self.aces_table = QTableWidget()
+        self.aces_table.setColumnCount(2)
+        self.aces_table.setHorizontalHeaderLabels(["Nome do Ás", "Vitórias"])
+        self.aces_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        aces_layout.addWidget(self.aces_table)
+        self.tabs.addTab(self.tab_aces, "Ases da Campanha")
+
 
     def select_pwcgfc_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, 'Selecionar Pasta PWCGFC')
@@ -731,8 +713,23 @@ class IL2CampaignAnalyzer(QMainWindow):
             self.missions_table.setItem(row, 3, duty_item)
             
         # Habilita o botão do diário se os dados foram carregados com sucesso
+        # Habilita o botão do diário se os dados foram carregados com sucesso
         if self.current_data:
             self.diary_button.setEnabled(True)
+
+        # Preencher a tabela de ases
+        aces_data = self.current_data.get("aces", [])
+        self.aces_table.setRowCount(len(aces_data))
+        for row, ace in enumerate(aces_data):
+            name_item = QTableWidgetItem(ace.get("name"))
+            victories_item = QTableWidgetItem(str(ace.get("victories")))
+
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            victories_item.setFlags(victories_item.flags() & ~Qt.ItemIsEditable)
+
+            self.aces_table.setItem(row, 0, name_item)
+            self.aces_table.setItem(row, 1, victories_item)
+
 
 
     def on_mission_selected(self):
