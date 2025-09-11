@@ -477,11 +477,26 @@ class IL2DataProcessor:
     def _process_pilot_data(self, campaign_info, combat_reports):
         pilot = {}
         try:
-            pilot['name'] = campaign_info.get('referencePlayerName') or campaign_info.get('playerName') or "N/A"
-            pilot['squadron'] = campaign_info.get('referencePlayerSquadronName') or campaign_info.get('playerSquadron', 'N/A')
+            # Nome vem sempre do Campaign.json
+            pilot['name'] = campaign_info.get('referencePlayerName') or campaign_info.get('playerName') \
+                            or campaign_info.get('name') or "N/A"
+
+            # Esquadrão vem do Campaign.json se existir, caso contrário, do primeiro CombatReport válido
+            squadron_name = campaign_info.get('referencePlayerSquadronName') or campaign_info.get('playerSquadron')
+            if not squadron_name and combat_reports:
+                for report in combat_reports:
+                    if isinstance(report, dict) and report.get("squadron"):
+                        squadron_name = report.get("squadron")
+                        break
+
+            pilot['squadron'] = squadron_name or "N/A"
+
+            # Total de missões voadas é o número de relatórios válidos
             pilot["total_missions"] = len([r for r in combat_reports if isinstance(r, dict)])
-            logger.debug(f"Dados brutos da campanha para piloto: {campaign_info}")
-            logger.debug(f"Nome do piloto processado: {pilot.get("name")}, Esquadrão processado: {pilot.get("squadron")}")
+
+            logger.debug(
+                f"Nome do piloto processado: {pilot.get('name')}, Esquadrão processado: {pilot.get('squadron')}"
+            )
         except Exception as e:
             logger.debug(f"Erro ao processar dados do piloto: {e}")
             pilot['name'] = pilot.get('name', 'N/A')
@@ -937,7 +952,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.load_saved_settings()
 
     def setup_ui(self):
-        self.setWindowTitle('IL-2 Campaign Analyzer v0.3')
+        self.setWindowTitle('IL-2 Campaign Analyzer v0.4')
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
