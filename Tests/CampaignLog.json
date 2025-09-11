@@ -1,0 +1,113 @@
+{
+  "campaignLogsByDate": {
+    "19160101": {
+      "date": "19160101",
+      "logs": [
+        {
+          "log": "The  Wound Stripe has been awarded to Lt Gabriel Grimbald",
+          "squadronId": 302002
+        },
+        {
+          "log": "The  Insigne des Blesses Militaires has been awarded to Sergt Robert Terrade",
+          "squadronId": 301019
+        },
+        {
+          "log": "The  Insigne des Blesses Militaires has been awarded to Cpl Camille Riou",
+          "squadronId": 301002
+        },
+        {
+          "log": "The  Wound Badge(Black) has been awarded to Uffz Konrad Nagelberg",
+          "squadronId": 401207
+        },
+        {
+          "log": "The  Insigne des Blesses Militaires has been awarded to S/Lt Jean-Jacques Vallat",
+          "squadronId": 301019
+        },
+        {
+          "log": "The  Insigne des Blesses Militaires has been awarded to Sergt Antonin Vasseur",
+          "squadronId": 301013
+        },
+        {
+          "log": "The  Belgium Wound Badge has been awarded to Cpl Etienne Tuymans",
+          "squadronId": 304003
+        },
+        {
+          "log": "The  Wound Badge(Black) has been awarded to Fw Wilfried Zuckermandel",
+          "squadronId": 401476
+        },
+        {
+          "log": "The  Belgium Wound Badge has been awarded to Lt Marcus Lippens",
+          "squadronId": 304003
+        },
+        {
+          "log": "The  Wound Badge(Black) has been awarded to Obltn Poldi Singermann",
+          "squadronId": 401218
+        },
+        {
+          "log": "The  Wound Badge(Black) has been awarded to Fw Walther Mair",
+          "squadronId": 401216
+        },
+        {
+          "log": "The  Insigne des Blesses Militaires has been awarded to S/Lt Jehan Guillement",
+          "squadronId": 301017
+        },
+        {
+          "log": "The  Insigne des Blesses Militaires has been awarded to S/Lt Theophile Bouvier",
+          "squadronId": 301029
+        },
+        {
+          "log": "Lt Marcus Lippens has been killed in action",
+          "squadronId": 304003
+        },
+        {
+          "log": "Obltn Poldi Singermann has been killed in action",
+          "squadronId": 401218
+        },
+        {
+          "log": "Sergt Robert Terrade has been killed in action",
+          "squadronId": 301019
+        },
+        {
+          "log": "Cpl Camille Riou has been killed in action",
+          "squadronId": 301002
+        },
+        {
+          "log": "S/Lt Jean-Jacques Vallat has been killed in action",
+          "squadronId": 301019
+        },
+        {
+          "log": "S/Lt Jehan Guillement has been killed in action",
+          "squadronId": 301017
+        },
+        {
+          "log": "Cpl Etienne Tuymans has been killed in action",
+          "squadronId": 304003
+        },
+        {
+          "log": "S/Lt Theophile Bouvier has been killed in action",
+          "squadronId": 301029
+        },
+        {
+          "log": "Sergt Antonin Vasseur has been seriously wounded in action",
+          "squadronId": 301013
+        },
+        {
+          "log": "Fw Walther Mair has been seriously wounded in action",
+          "squadronId": 401216
+        },
+        {
+          "log": "On 01/01/1916 near Etain.\nA vehicle was destroyed by Sergent Marc Leclercq of Esc 108.\nSergent Marc Leclercq was flying a Farman F.40.",
+          "squadronId": 301108
+        },
+        {
+          "log": "On 01/01/1916 near StMihiel.\nA Albatros C.II of FA 16 was brought down by Sous Lieutenant Jean Pregermain of Esc 37.\nThe pilot was killed in action\nSous Lieutenant Jean Pregermain was flying a Nieuport 11.C1.",
+          "squadronId": 301037
+        },
+        {
+          "log": "On 01/01/1916 near Perenchies.\nA Albatros C.II of FA 7 was brought down by Major James Merstun of No 29 Squadron RFC.\nThe pilot was killed in action\nMajor James Merstun was flying a Airco D.H.2.",
+          "squadronId": 302029
+        }
+      ]
+    }
+  }
+}

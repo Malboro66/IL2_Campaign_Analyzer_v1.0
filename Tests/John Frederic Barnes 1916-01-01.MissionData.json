@@ -1,0 +1,238 @@
+{
+  "missionHeader": {
+    "missionFileName": "John Frederic Barnes 1916-01-01",
+    "squadron": "No 12 Squadron RFC",
+    "date": "19160101",
+    "time": "1.1.1916",
+    "aircraftType": "F.E.2b",
+    "mapName": "WesternFront",
+    "airfield": "La Bellevue",
+    "duty": "BOMB",
+    "altitude": 1272
+  },
+  "missionDescription": "Mission: \nAircraft  F.E.2b\nSquadron  No 12 Squadron RFC\nAirbase  La Bellevue\nDate  1.1.1916\nTime  08:00:00\n\nWeather Report \n    Light cloud cover, high altitude.\n    Cloud layer is 4579 meters.\n    Wind speed is 4 M/S.\n    Wind direction is 201.\n\nPrimary Objective \n    Attack the rail facilities near Velu\n\nEscorted by Nieuport 11.C1s of Esc 3\n\n",
+  "missionPlanes": {
+    "3000106": {
+      "squadronId": 301019,
+      "pilotSerialNumber": 3000106,
+      "planeSerialNumber": 5000133,
+      "pilotName": "Rene Lamor"
+    },
+    "1000001": {
+      "squadronId": 302012,
+      "pilotSerialNumber": 1000001,
+      "planeSerialNumber": 5000484,
+      "pilotName": "John Frederic Barnes"
+    },
+    "3000316": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000316,
+      "planeSerialNumber": 5000413,
+      "pilotName": "Theophile Pregermain"
+    },
+    "3000318": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000318,
+      "planeSerialNumber": 5000412,
+      "pilotName": "Henri Lavy"
+    },
+    "3000382": {
+      "squadronId": 302012,
+      "pilotSerialNumber": 3000382,
+      "planeSerialNumber": 5000489,
+      "pilotName": "Frasier Walrond"
+    },
+    "3000574": {
+      "squadronId": 401218,
+      "pilotSerialNumber": 3000574,
+      "planeSerialNumber": 5000756,
+      "pilotName": "Paul Flemming"
+    },
+    "3000313": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000313,
+      "planeSerialNumber": 5000408,
+      "pilotName": "Alain Chapelain"
+    },
+    "3000377": {
+      "squadronId": 302012,
+      "pilotSerialNumber": 3000377,
+      "planeSerialNumber": 5000481,
+      "pilotName": "Heath Cobham"
+    },
+    "3000312": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000312,
+      "planeSerialNumber": 5000407,
+      "pilotName": "Theophile Polito"
+    },
+    "3000314": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000314,
+      "planeSerialNumber": 5000411,
+      "pilotName": "Alphonse Ventre"
+    },
+    "3000378": {
+      "squadronId": 302012,
+      "pilotSerialNumber": 3000378,
+      "planeSerialNumber": 5000485,
+      "pilotName": "Conan Longton"
+    },
+    "3000373": {
+      "squadronId": 302012,
+      "pilotSerialNumber": 3000373,
+      "planeSerialNumber": 5000478,
+      "pilotName": "Casper Baker"
+    },
+    "3000628": {
+      "squadronId": 401246,
+      "pilotSerialNumber": 3000628,
+      "planeSerialNumber": 5000812,
+      "pilotName": "Anton Furst"
+    },
+    "3000631": {
+      "squadronId": 401246,
+      "pilotSerialNumber": 3000631,
+      "planeSerialNumber": 5000820,
+      "pilotName": "Nikolaus Fleming"
+    },
+    "3000630": {
+      "squadronId": 401246,
+      "pilotSerialNumber": 3000630,
+      "planeSerialNumber": 5000822,
+      "pilotName": "Udo Wagenknecht"
+    },
+    "3000625": {
+      "squadronId": 401246,
+      "pilotSerialNumber": 3000625,
+      "planeSerialNumber": 5000816,
+      "pilotName": "Anton Waldenburg"
+    },
+    "3000624": {
+      "squadronId": 401246,
+      "pilotSerialNumber": 3000624,
+      "planeSerialNumber": 5000811,
+      "pilotName": "Heinrich Brudes"
+    },
+    "3000626": {
+      "squadronId": 401246,
+      "pilotSerialNumber": 3000626,
+      "planeSerialNumber": 5000819,
+      "pilotName": "Thomas Sacher"
+    },
+    "3000013": {
+      "squadronId": 301003,
+      "pilotSerialNumber": 3000013,
+      "planeSerialNumber": 5000018,
+      "pilotName": "Marius Laforge"
+    },
+    "3000014": {
+      "squadronId": 301003,
+      "pilotSerialNumber": 3000014,
+      "planeSerialNumber": 5000023,
+      "pilotName": "Vincent Lacan"
+    },
+    "3000585": {
+      "squadronId": 401218,
+      "pilotSerialNumber": 3000585,
+      "planeSerialNumber": 5000764,
+      "pilotName": "Baldemar Brandstaetter"
+    },
+    "3000520": {
+      "squadronId": 401012,
+      "pilotSerialNumber": 3000520,
+      "planeSerialNumber": 5000684,
+      "pilotName": "Klemens Nesler"
+    },
+    "3000580": {
+      "squadronId": 401218,
+      "pilotSerialNumber": 3000580,
+      "planeSerialNumber": 5000761,
+      "pilotName": "Gerhard Schlim"
+    },
+    "3000582": {
+      "squadronId": 401218,
+      "pilotSerialNumber": 3000582,
+      "planeSerialNumber": 5000763,
+      "pilotName": "Dirk Weiszhaupt"
+    },
+    "3000321": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000321,
+      "planeSerialNumber": 5000417,
+      "pilotName": "Rene Laffont"
+    },
+    "3000577": {
+      "squadronId": 401218,
+      "pilotSerialNumber": 3000577,
+      "planeSerialNumber": 5000757,
+      "pilotName": "Berthold Schicketanz"
+    },
+    "3000320": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000320,
+      "planeSerialNumber": 5000415,
+      "pilotName": "Alexandre Petitpoisson"
+    },
+    "3000323": {
+      "squadronId": 301107,
+      "pilotSerialNumber": 3000323,
+      "planeSerialNumber": 5000420,
+      "pilotName": "Claude Laffargue"
+    },
+    "3000515": {
+      "squadronId": 401012,
+      "pilotSerialNumber": 3000515,
+      "planeSerialNumber": 5000681,
+      "pilotName": "Karl Gratz"
+    },
+    "3000031": {
+      "squadronId": 301007,
+      "pilotSerialNumber": 3000031,
+      "planeSerialNumber": 5000034,
+      "pilotName": "Victor Brindejonc"
+    },
+    "3000607": {
+      "squadronId": 401223,
+      "pilotSerialNumber": 3000607,
+      "planeSerialNumber": 5000792,
+      "pilotName": "Kristian Strasburger"
+    },
+    "3000603": {
+      "squadronId": 401223,
+      "pilotSerialNumber": 3000603,
+      "planeSerialNumber": 5000790,
+      "pilotName": "Wolfgang Schonbohm"
+    },
+    "3000539": {
+      "squadronId": 401207,
+      "pilotSerialNumber": 3000539,
+      "planeSerialNumber": 5000722,
+      "pilotName": "Heinrich Oppelt"
+    },
+    "3000602": {
+      "squadronId": 401223,
+      "pilotSerialNumber": 3000602,
+      "planeSerialNumber": 5000788,
+      "pilotName": "Ferdinand Gelernter"
+    },
+    "3000021": {
+      "squadronId": 301003,
+      "pilotSerialNumber": 3000021,
+      "planeSerialNumber": 5000030,
+      "pilotName": "Marcel Laborde"
+    },
+    "3000599": {
+      "squadronId": 401223,
+      "pilotSerialNumber": 3000599,
+      "planeSerialNumber": 5000786,
+      "pilotName": "Elmar Ackner"
+    },
+    "3000598": {
+      "squadronId": 401223,
+      "pilotSerialNumber": 3000598,
+      "planeSerialNumber": 5000784,
+      "pilotName": "Bruno Frey"
+    }
+  }
+}
