@@ -393,6 +393,7 @@ class IL2DataProcessor:
                 'pilots': pilots_in_mission,
                 'weather': weather_text,
                 'description': description_text,
+                'haReport': report.get('haReport', '')  # <-- adicionado
             }
             missions_with_key.append((raw_date or "99999999", mission_entry))
 
@@ -684,6 +685,14 @@ class IL2ReportGenerator:
             else:
                 story.append(Paragraph("Lista de pilotos não disponível no relatório.", self.styles['Normal']))
 
+            # ----------------------------
+            # 🔹 Adicionando o Relatório HA
+            # ----------------------------
+            if mission_data.get("haReport"):
+                story.append(Spacer(1, 0.3 * inch))
+                story.append(Paragraph("Relatório HA", self.styles['CustomHeading']))
+                story.append(Paragraph(mission_data["haReport"].replace("\n", "<br/>"), self.styles['Normal']))
+
             if map_success and mini_map_path and os.path.exists(mini_map_path):
                 story.append(Spacer(1, 0.3 * inch))
                 story.append(Paragraph("Localização da Missão", self.styles['CustomHeading']))
@@ -741,7 +750,6 @@ class IL2ReportGenerator:
                     continue
             if companheiros:
                 narrativa_parts.append(f" Voaram comigo hoje os camaradas {', '.join(companheiros[:3])}.")
-
         narrativa_parts.append(" A patrulha ocorreu sem grandes incidentes e retornamos em segurança.")
         narrativa_parts.append("\n" + ("-" * 80) + "\n")
         return "".join(narrativa_parts)
