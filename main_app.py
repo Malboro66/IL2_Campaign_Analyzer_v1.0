@@ -10,6 +10,7 @@ import random
 import threading
 import logging
 import tempfile
+import math
 from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
@@ -833,7 +834,20 @@ class IL2ReportGenerator:
             diario_lines.append(self._gerar_entrada_diario(missao, piloto_nome))
 
         return "\n".join(diario_lines)
+class WaypointMapper:
+    def __init__(self, map_coordinates):
+        self.map_coordinates = map_coordinates
 
+    def find_nearest_locality(self, x, z):
+        """Encontra localidade mais próxima no JSON"""
+        nearest = None
+        min_dist = float("inf")
+        for locality, (px, py) in self.map_coordinates.items():
+            dist = math.dist((x, z), (px, py))
+            if dist < min_dist:
+                nearest = (locality, (px, py))
+                min_dist = dist
+        return nearest
 # ===================================================================
 #  APPLICATION CLASSES
 # ===================================================================

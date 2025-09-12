@@ -2,22 +2,15 @@
                    DIÁRIO DE BORDO DE CAMPANHA
 ================================================================================
 
-Piloto: Alphonse Von Richter
-Esquadrão: KEK 3
-Período da Campanha: 01/01/1916 a 08/01/1916
+Piloto: John Frederic Barnes
+Esquadrão: No 12 Squadron RFC
+Período da Campanha: 01/01/1916 a 01/01/1916
 
 ================================================================================
 
 01 de January de 1916
-O dia começou com o tempo overcast at medium altitude with snow.  ground covering fog possible
-    cloud layer is 1691 meters.
-    wind speed is 5 m/s.
-    wind direction is 353.. Partimos de La Brayelle por volta das 11:00:00. Minha tarefa era uma missão de 'LOW_ALT_CAP' no meu Fokker E.III. Voaram comigo hoje os camaradas Boelcke, Altenau. A patrulha ocorreu sem grandes incidentes e retornamos em segurança.
---------------------------------------------------------------------------------
-
-08 de January de 1916
-As condições hoje eram de Mostly clear, some high altitude clouds.
-    Cloud layer is 5854 meters.
-    Wind speed is 2 M/S.
-    Wind direction is 303.. Decolamos de La Brayelle às 12:00:00. Minha tarefa era uma missão de 'PATROL' no meu Fokker E.III. Voaram comigo hoje os camaradas Maeckler. A patrulha ocorreu sem grandes incidentes e retornamos em segurança.
+As condições hoje eram de Light cloud cover, high altitude.
+    Cloud layer is 4579 meters.
+    Wind speed is 4 M/S.
+    Wind direction is 201.. Decolamos de La Bellevue às 08:00:00. Minha tarefa era uma missão de 'BOMB' no meu F.E.2b. Voaram comigo hoje os camaradas Baker, Walrond, Cobham. A patrulha ocorreu sem grandes incidentes e retornamos em segurança.
 --------------------------------------------------------------------------------
