@@ -1,6 +1,7 @@
 # ===================================================================
-#  IL2 Campaign Analyzer - main_app.py (improved & fixes)
+#  IL2 Campaign Analyzer - main.py (versão limpa e revisada)
 # ===================================================================
+
 import sys
 import os
 import json
@@ -8,10 +9,15 @@ import re
 import random
 import threading
 import logging
+import tempfile
 from datetime import datetime
 from typing import Dict, List, Any
 from pathlib import Path
+
+# Bibliotecas de imagem
 from PIL import Image, ImageDraw, ImageFont
+
+# PyQt5
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit,
@@ -20,7 +26,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QLockFile
-import tempfile
+
+# ReportLab
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -28,12 +35,13 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
+import logging.handlers
+
 # ===================================================================
 #  LOGGING SETUP (robust, single logger, file + stdout)
 # ===================================================================
-import logging.handlers
-
 def _setup_logging(level: int = logging.INFO) -> logging.Logger:
+    """Configura o logger principal da aplicação."""
     logger_name = "IL2CampaignAnalyzer"
     logger = logging.getLogger(logger_name)
 
@@ -41,13 +49,17 @@ def _setup_logging(level: int = logging.INFO) -> logging.Logger:
         return logger
 
     logger.setLevel(level)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+    )
 
+    # Console
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(level)
     sh.setFormatter(formatter)
     logger.addHandler(sh)
 
+    # Arquivo de log
     try:
         base_dir = Path(__file__).parent if '__file__' in globals() else Path.cwd()
         logs_dir = base_dir / "logs"
@@ -62,24 +74,27 @@ def _setup_logging(level: int = logging.INFO) -> logging.Logger:
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-    except Exception:
-        logger.warning("Não foi possível inicializar o handler de arquivo de log.")
+    except Exception as e:
+        logger.warning(f"Não foi possível inicializar o handler de arquivo de log: {e}")
 
     logger.propagate = False
 
+    # Hooks globais de exceção
     def _excepthook(exc_type, exc_value, exc_traceback):
-        if logger:
-            logger.exception("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+        logger.exception("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = _excepthook
 
     try:
         def _threading_excepthook(args):
-            logger.exception("Uncaught threading exception", exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+            logger.exception(
+                "Uncaught threading exception",
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback)
+            )
         threading.excepthook = _threading_excepthook  # type: ignore
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Thread excepthook não configurado: {e}")
 
     return logger
 
@@ -104,7 +119,7 @@ class IL2DataParser:
         self._json_cache: Dict[str, Any] = {}
 
     def get_json_data(self, file_path: Path) -> Any:
-        """Carrega JSON de arquivo, com cache, diferentes encodings e fallback tolerante."""
+        """Carrega JSON de arquivo, com cache e fallback de encoding."""
         try:
             file_path = Path(file_path)
             key = str(file_path.resolve())
@@ -118,21 +133,20 @@ class IL2DataParser:
             logger.warning(f"Arquivo não encontrado: {file_path}")
             return None
 
-        # Tentativas em ordem: utf-8, latin-1, leitura com errors='replace' + json.loads
+        # Tentativas em ordem: utf-8, latin-1, tolerante
         try:
             with file_path.open('r', encoding='utf-8') as f:
                 data = json.load(f)
                 self._json_cache[key] = data
                 return data
         except json.JSONDecodeError:
-            logger.debug(f"JSONDecodeError ao ler {file_path} como utf-8; tentando latin-1.")
+            logger.debug(f"Falha UTF-8 em {file_path}, tentando latin-1...")
             try:
                 with file_path.open('r', encoding='latin-1') as f:
                     data = json.load(f)
                     self._json_cache[key] = data
                     return data
             except json.JSONDecodeError:
-                logger.debug(f"latin-1 também falhou para {file_path}; tentando leitura tolerante.")
                 try:
                     text = file_path.read_text(encoding='utf-8', errors='replace')
                     data = json.loads(text)
@@ -142,11 +156,8 @@ class IL2DataParser:
                     logger.error(f"Erro ao decodificar JSON (fallback) {file_path}: {e}")
                     return None
             except Exception as e:
-                logger.error(f"Erro ao ler arquivo {file_path} com latin-1: {e}")
+                logger.error(f"Erro ao ler {file_path} (latin-1): {e}")
                 return None
-        except IOError as e:
-            logger.error(f"Erro ao ler o arquivo JSON {file_path}: {e}")
-            return None
         except Exception as e:
             logger.error(f"Erro inesperado ao carregar JSON {file_path}: {e}")
             return None
@@ -167,12 +178,26 @@ class IL2DataParser:
         return self.get_json_data(path) or {}
 
     def get_campaign_aces(self, campaign_name: str) -> List[Dict]:
+        """
+       Carrega os ases da campanha.
+       Suporta múltiplos formatos:
+        - lista direta
+        - dict com chave 'aces'
+        - dict com chave 'acesInCampaign' (formato PWCG)
+       """
         aces_path = self.campaigns_path / campaign_name / 'CampaignAces.json'
         data = self.get_json_data(aces_path)
+        if not data:
+            return []
+
         if isinstance(data, list):
-            return data
+           return data
         if isinstance(data, dict):
-            return data.get('aces', []) if data.get('aces') else []
+            if "aces" in data and isinstance(data["aces"], list):
+                return data["aces"]
+            if "acesInCampaign" in data and isinstance(data["acesInCampaign"], dict):
+                # converter dict {serial: {...}} em lista de ases
+                return list(data["acesInCampaign"].values())
         return []
 
     def get_squadron_personnel(self, campaign_name: str, squadron_id: int) -> Dict:
@@ -301,8 +326,8 @@ class IL2DataParser:
 class IL2DataProcessor:
     """Processa os dados brutos, organizando e enriquecendo as informações."""
     def __init__(self, pwcgfc_path):
+        # ✅ Só inicializa o parser, não precisa de self.pwcgfc_path nem campaigns_path aqui
         self.parser = IL2DataParser(pwcgfc_path)
-
     def process_campaign(self, campaign_name: str) -> Dict:
         campaign_info = self.parser.get_campaign_info(campaign_name)
         if not campaign_info:
@@ -336,66 +361,68 @@ class IL2DataProcessor:
         player_squadron_id = None
 
         for report in combat_reports:
-            if not isinstance(report, dict):
+            if isinstance(report, dict):
+                raw_date = report.get('date', '') or ''
+                try:
+                    mission_details = self.parser.get_mission_data(campaign_name, report) or {}
+                except Exception as e:
+                    logger.warning(f"Falha ao obter MissionData para relatório: {e}")
+                    mission_details = {}
+
+                mission_time = report.get("time", "N/A")
+
+                pilots_in_mission = []
+                ha_report = report.get('haReport') or ""
+                if ha_report:
+                    pilot_lines = re.findall(r'^[^\n]+$', ha_report, re.MULTILINE)
+                    for line in pilot_lines:
+                        clean = line.strip()
+                        if not clean:
+                            continue
+                        if clean.lower().startswith("this mission"):
+                            continue
+                        if clean.lower().startswith("the mission"):
+                            continue
+                        pilots_in_mission.append(clean)
+
+                weather_text = "Não disponível"
+                description_text = "Descrição da missão não encontrada."
+                try:
+                    if mission_details:
+                        description_text = mission_details.get('missionDescription', description_text) or description_text
+                        time_match = re.search(r'Time\s+([0-9]{2}:[0-9]{2}:[0-9]{2})', description_text)
+                        if time_match:
+                            mission_time = time_match.group(1)
+                        match = re.search(r'Weather Report\s*\n(.*?)(?:\n\n|$)', description_text, re.DOTALL | re.IGNORECASE)
+                        if match:
+                            weather_text = match.group(1).strip()
+                        if not player_squadron_id:
+                            mission_planes = mission_details.get('missionPlanes', {}) or {}
+                            for k, v in mission_planes.items():
+                                try:
+                                    if str(k) == str(player_serial):
+                                        player_squadron_id = v.get('squadronId') if isinstance(v, dict) else None
+                                        break
+                                except Exception:
+                                    continue
+                except Exception as e:
+                    logger.debug(f"Erro ao processar mission_details: {e}")
+
+                mission_entry = {
+                    'date': self._format_date(raw_date) if raw_date else report.get('date', 'N/A'),
+                    'time': mission_time,
+                    'aircraft': report.get('type', 'N/A'),
+                    'duty': report.get('duty', 'N/A'),
+                    'locality': report.get('locality', 'N/A'),
+                    'airfield': (mission_details.get('missionHeader', {}) if isinstance(mission_details.get('missionHeader', {}), dict) else {}).get('airfield', 'N/A'),
+                    'pilots': pilots_in_mission,
+                    'weather': weather_text,
+                    'description': description_text,
+                    'haReport': report.get('haReport', '')
+                }
+                missions_with_key.append((raw_date or "99999999", mission_entry))
+            else:
                 logger.debug(f"Relatório inválido encontrado: {report}. Pulando.")
-                continue
-
-            raw_date = report.get('date', '') or ''
-            try:
-                mission_details = self.parser.get_mission_data(campaign_name, report) or {}
-            except Exception as e:
-                logger.warning(f"Falha ao obter MissionData para relatório: {e}")
-                mission_details = {}
-
-            mission_time = report.get("time", "N/A")
-
-            pilots_in_mission = []
-            ha_report = report.get('haReport') or ""
-            if ha_report:
-                pilot_lines = re.findall(r'^(?:Ltn|Lieutenant|Fw|Obltn|Cne|S/Lt|Sergt|Lt|Capt|Maj)\.?\s+.*$', ha_report, re.MULTILINE | re.IGNORECASE)
-                for line in pilot_lines:
-                    name = re.sub(r'^(?:Ltn|Lieutenant|Fw|Obltn|Cne|S/Lt|Sergt|Lt|Capt|Maj)\.?\s*', '', line, flags=re.IGNORECASE).strip()
-                    if name:
-                        pilots_in_mission.append(name)
-            seen = set()
-            pilots_in_mission = [p for p in pilots_in_mission if not (p in seen or seen.add(p))]
-
-            weather_text = "Não disponível"
-            description_text = "Descrição da missão não encontrada."
-            try:
-                if mission_details:
-                    description_text = mission_details.get('missionDescription', description_text) or description_text
-                    time_match = re.search(r'Time\s+([0-9]{2}:[0-9]{2}:[0-9]{2})', description_text)
-                    if time_match:
-                        mission_time = time_match.group(1)
-                    match = re.search(r'Weather Report\s*\n(.*?)(?:\n\n|$)', description_text, re.DOTALL | re.IGNORECASE)
-                    if match:
-                        weather_text = match.group(1).strip()
-                    if not player_squadron_id:
-                        mission_planes = mission_details.get('missionPlanes', {}) or {}
-                        for k, v in mission_planes.items():
-                            try:
-                                if str(k) == str(player_serial):
-                                    player_squadron_id = v.get('squadronId') if isinstance(v, dict) else None
-                                    break
-                            except Exception:
-                                continue
-            except Exception as e:
-                logger.debug(f"Erro ao processar mission_details: {e}")
-
-            mission_entry = {
-                'date': self._format_date(raw_date) if raw_date else report.get('date', 'N/A'),
-                'time': mission_time,
-                'aircraft': report.get('type', 'N/A'),
-                'duty': report.get('duty', 'N/A'),
-                'locality': report.get('locality', 'N/A'),
-                'airfield': (mission_details.get('missionHeader', {}) if isinstance(mission_details.get('missionHeader', {}), dict) else {}).get('airfield', 'N/A'),
-                'pilots': pilots_in_mission,
-                'weather': weather_text,
-                'description': description_text,
-                'haReport': report.get('haReport', '')  # <-- adicionado
-            }
-            missions_with_key.append((raw_date or "99999999", mission_entry))
 
         try:
             missions_with_key.sort(key=lambda t: (t[0] == "99999999", t[0]))
@@ -451,20 +478,32 @@ class IL2DataProcessor:
         }.get(status_code, "Desconhecido")
 
     def _process_aces_data(self, aces_raw_data: List[Dict]) -> List[Dict]:
+        """
+        Normaliza dados de ases, computando vitórias corretamente
+        (suporta inteiros ou listas de vitórias detalhadas).
+       """
         aces = []
         if not aces_raw_data:
             return aces
+
         for ace in aces_raw_data:
             try:
-                victories = ace.get('victories', 0)
-                victories = int(victories) if (isinstance(victories, (int, str)) and str(victories).isdigit()) else (victories if isinstance(victories, int) else 0)
+                raw_victories = ace.get("victories", [])
+                if isinstance(raw_victories, list):
+                    victories_count = len(raw_victories)
+                elif isinstance(raw_victories, (int, str)) and str(raw_victories).isdigit():
+                    victories_count = int(raw_victories)
+                else:
+                    victories_count = 0
             except Exception:
-                victories = 0
+                victories_count = 0
+
             aces.append({
-                'name': ace.get('name', 'N/A'),
-                'victories': victories
+                "name": ace.get("name", "N/A"),
+                "victories": victories_count
             })
-        aces.sort(key=lambda x: x['victories'], reverse=True)
+
+        aces.sort(key=lambda x: x["victories"], reverse=True)
         return aces
 
     def _format_date(self, date_str):
@@ -734,7 +773,6 @@ class IL2ReportGenerator:
             f"As condições hoje eram de {missao.get('weather', 'tempo incerto')}. Decolamos de {missao.get('airfield', 'nossa base')} às {missao.get('time', 'hora incerta')}."
         ]
         narrativa_parts.append(random.choice(frases_clima))
-
         narrativa_parts.append(f" Minha tarefa era uma missão de '{missao.get('duty', 'tipo desconhecido')}' no meu {missao.get('aircraft', 'aeronave')}.")
         if missao.get('pilots'):
             piloto_lower = (piloto_nome or "").lower()
@@ -750,6 +788,7 @@ class IL2ReportGenerator:
                     continue
             if companheiros:
                 narrativa_parts.append(f" Voaram comigo hoje os camaradas {', '.join(companheiros[:3])}.")
+        
         narrativa_parts.append(" A patrulha ocorreu sem grandes incidentes e retornamos em segurança.")
         narrativa_parts.append("\n" + ("-" * 80) + "\n")
         return "".join(narrativa_parts)
@@ -1273,10 +1312,10 @@ if __name__ == '__main__':
         lock = QLockFile(lockfile_path)
         lock.setStaleLockTime(0)
         if not lock.tryLock(100):
-            try:
-                QMessageBox.warning(None, "Instância em execução", "Outra instância do programa já está em execução.")
-            except Exception:
-                pass
+            QMessageBox.warning(
+                None, "Instância em execução",
+                "Outra instância do programa já está em execução."
+            )
             logger.warning("Outra instância detectada. Saindo.")
             sys.exit(0)
     except Exception:
@@ -1287,10 +1326,7 @@ if __name__ == '__main__':
         window.show()
     except Exception:
         logger.exception("Falha ao inicializar a janela principal")
-        try:
-            QMessageBox.critical(None, "Erro", "Falha ao iniciar a interface. Veja os logs para detalhes.")
-        except Exception:
-            pass
+        QMessageBox.critical(None, "Erro", "Falha ao iniciar a interface.")
         sys.exit(1)
 
     try:
@@ -1299,11 +1335,8 @@ if __name__ == '__main__':
         logger.exception("Exceção não tratada no loop principal do Qt")
         exit_code = 1
     finally:
-        try:
-            if lock and lock.isLocked():
-                lock.unlock()
-        except Exception:
-            pass
+        if lock and lock.isLocked():
+            lock.unlock()
 
     logger.info("Encerrando IL-2 Campaign Analyzer")
     sys.exit(exit_code)
