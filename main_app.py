@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QLabel, QTabWidget, QTextEdit,
     QFormLayout, QGroupBox, QComboBox, QMessageBox, QTableWidget,
-    QTableWidgetItem, QHeaderView, QProgressBar, QStatusBar, QSplitter, QScrollArea
+    QTableWidgetItem, QHeaderView, QProgressBar, QStatusBar, QSplitter
 )
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QSettings, QThread, pyqtSignal, QLockFile
@@ -563,138 +563,11 @@ class IL2ReportGenerator:
             fontSize=16, alignment=TA_LEFT, spaceAfter=12, spaceBefore=12,
             textColor=colors.darkslateblue
         ))
-        self.map_coordinates = self._load_map_coordinates()
-
-    def _load_map_coordinates(self):
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            coords_path = os.path.join(script_dir, "coordenadas_mapa_final_calibrado.json")
-            if not os.path.exists(coords_path):
-                # fallback: cwd
-                coords_path = os.path.join(os.getcwd(), "coordenadas_mapa_final_calibrado.json")
-            with open(coords_path, 'r', encoding='utf-8') as f:
-                return json.load(f) or {}
-        except FileNotFoundError:
-            logger.error("Arquivo 'coordenadas_mapa_final_calibrado.json' não encontrado!")
-            return {}
-        except Exception as e:
-            logger.error(f"Erro ao carregar coordenadas do mapa: {e}")
-            return {}
-
-    def gerar_mapa_de_carreira(self, missoes: list, output_path: str, highlight_mission_index: int = -1):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        mapa_base_path = os.path.join(script_dir, "mapa_base.jpg")
-        if not os.path.exists(mapa_base_path):
-            mapa_base_path = os.path.join(os.getcwd(), "mapa_base.jpg")
-
-        if not os.path.exists(mapa_base_path):
-            logger.warning("mapa_base.jpg ausente.")
-            return False
-        if not self.map_coordinates:
-            logger.warning("Coordenadas do mapa vazias.")
-            return False
-
-        try:
-            img = Image.open(mapa_base_path).convert("RGB")
-            draw = ImageDraw.Draw(img)
-
-            try:
-                base_font_size = max(12, img.width // 50)
-                font = ImageFont.truetype("arial.ttf", base_font_size)
-            except Exception:
-                font = ImageFont.load_default()
-
-            if not isinstance(missoes, list):
-                missoes = list(missoes or [])
-
-            def _to_point(value):
-                try:
-                    x, y = value
-                    return (int(round(float(x))), int(round(float(y))))
-                except Exception:
-                    return None
-
-            if highlight_mission_index != -1 and 0 <= highlight_mission_index < len(missoes):
-                missao = missoes[highlight_mission_index]
-                localidade = missao.get('locality')
-                if localidade in self.map_coordinates:
-                    ponto = _to_point(self.map_coordinates[localidade])
-                    if ponto:
-                        raio = max(10, img.width // 80)
-                        draw.ellipse((ponto[0] - raio, ponto[1] - raio, ponto[0] + raio, ponto[1] + raio), outline="yellow", width=5)
-                        draw.ellipse((ponto[0] - raio*2, ponto[1] - raio*2, ponto[0] + raio*2, ponto[1] + raio*2), outline="yellow", width=2)
-                        try:
-                            draw.text((ponto[0] + raio + 5, ponto[1] - raio // 2), f"{localidade}", font=font, fill="yellow")
-                        except Exception:
-                            pass
-                    else:
-                        logger.debug(f"Coordenadas inválidas para '{localidade}': {self.map_coordinates.get(localidade)}")
-                else:
-                    logger.debug(f"Localidade '{localidade}' não encontrada nas coordenadas.")
-            else:
-                ponto_anterior = None
-                for i, missao in enumerate(missoes):
-                    localidade = missao.get('locality')
-                    if not localidade:
-                        continue
-                    coord = self.map_coordinates.get(localidade)
-                    ponto_atual = _to_point(coord) if coord else None
-                    if not ponto_atual:
-                        logger.debug(f"Localidade '{localidade}' não encontrada ou coordenada inválida; pulando.")
-                        continue
-                    if ponto_anterior:
-                        try:
-                            draw.line([ponto_anterior, ponto_atual], fill="yellow", width=max(2, img.width // 200))
-                        except Exception:
-                            pass
-                    raio = max(6, img.width // 160)
-                    try:
-                        draw.ellipse((ponto_atual[0] - raio, ponto_atual[1] - raio, ponto_atual[0] + raio, ponto_atual[1] + raio), fill="#FF0000", outline="black", width=2)
-                    except Exception:
-                        pass
-                    try:
-                        draw.text((ponto_atual[0] + raio + 3, ponto_atual[1] - raio - 3), str(i + 1), font=font, fill="white")
-                    except Exception:
-                        pass
-                    ponto_anterior = ponto_atual
-
-            # ensure folder exists
-            out_dir = os.path.dirname(output_path) or "."
-            try:
-                os.makedirs(out_dir, exist_ok=True)
-            except Exception:
-                pass
-
-            img.save(output_path)
-            return True
-        except Exception as e:
-            logger.error(f"Falha ao gerar imagem do mapa: {e}")
-            return False
 
     def generate_mission_report_pdf(self, mission_data, all_missions, mission_index, output_path):
-        import tempfile
+        
         from reportlab.platypus import Image as ReportLabImage
         from reportlab.lib.utils import ImageReader
-
-        mini_map_path = None
-        tmp_file = None
-        try:
-            tmp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-            mini_map_path = tmp_file.name
-            tmp_file.close()
-        except Exception:
-            mini_map_path = os.path.join(tempfile.gettempdir(), "mini_mapa_temp.png")
-
-        map_success = False
-        try:
-            map_success = self.gerar_mapa_de_carreira(
-                missoes=all_missions or [],
-                output_path=mini_map_path,
-                highlight_mission_index=mission_index
-            )
-        except Exception as e:
-            logger.warning(f"Falha ao gerar mini-mapa: {e}")
-            map_success = False
 
         try:
             doc = SimpleDocTemplate(output_path, pagesize=A4)
@@ -732,30 +605,12 @@ class IL2ReportGenerator:
                 story.append(Spacer(1, 0.3 * inch))
                 story.append(Paragraph("Relatório HA", self.styles['CustomHeading']))
                 story.append(Paragraph(mission_data["haReport"].replace("\n", "<br/>"), self.styles['Normal']))
-
-            if map_success and mini_map_path and os.path.exists(mini_map_path):
-                story.append(Spacer(1, 0.3 * inch))
-                story.append(Paragraph("Localização da Missão", self.styles['CustomHeading']))
-                try:
-                    img_reader = ImageReader(mini_map_path)
-                    img_width, img_height = img_reader.getSize()
-                    aspect = img_height / float(img_width) if img_width else 1.0
-                    display_width = 6 * inch
-                    story.append(ReportLabImage(mini_map_path, width=display_width, height=(display_width * aspect)))
-                except Exception as e:
-                    logger.warning(f"Falha ao anexar mini-mapa no PDF: {e}")
-
             doc.build(story)
             return True
         except Exception as e:
             logger.error(f"Erro ao gerar PDF da missão: {e}")
             return False
-        finally:
-            try:
-                if mini_map_path and os.path.exists(mini_map_path):
-                    os.remove(mini_map_path)
-            except Exception:
-                pass
+
 
     def _gerar_entrada_diario(self, missao: dict, piloto_nome: str) -> str:
         data_raw = missao.get('date', '') or ''
@@ -834,20 +689,7 @@ class IL2ReportGenerator:
             diario_lines.append(self._gerar_entrada_diario(missao, piloto_nome))
 
         return "\n".join(diario_lines)
-class WaypointMapper:
-    def __init__(self, map_coordinates):
-        self.map_coordinates = map_coordinates
 
-    def find_nearest_locality(self, x, z):
-        """Encontra localidade mais próxima no JSON"""
-        nearest = None
-        min_dist = float("inf")
-        for locality, (px, py) in self.map_coordinates.items():
-            dist = math.dist((x, z), (px, py))
-            if dist < min_dist:
-                nearest = (locality, (px, py))
-                min_dist = dist
-        return nearest
 # ===================================================================
 #  APPLICATION CLASSES
 # ===================================================================
@@ -884,121 +726,6 @@ class DataSyncThread(QThread):
                 self.progress.emit(0)
             except Exception:
                 pass
-
-class MapViewer(QScrollArea):
-    """Widget que exibe uma imagem com suporte a zoom e fit-to-view."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.zoom_factor = 1.0
-        self._pixmap = QPixmap()
-        self._fit_factor = 1.0
-        self._is_fit = True
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.setWidget(self.image_label)
-        self.setWidgetResizable(True)
-        self._min_zoom = 0.1
-        self._max_zoom = 10.0
-
-    def set_pixmap(self, pixmap):
-        """Define o pixmap original; aceita QPixmap, caminho (str/Path)."""
-        if isinstance(pixmap, QPixmap):
-            self._pixmap = pixmap
-        else:
-            try:
-                p = str(pixmap)
-                if not os.path.exists(p):
-                    self.image_label.setText("Imagem não encontrada.")
-                    self._pixmap = QPixmap()
-                    return
-                self._pixmap = QPixmap(p)
-            except Exception:
-                self._pixmap = QPixmap()
-
-        if self._pixmap.isNull():
-            self.image_label.clear()
-            return
-
-        self.fit_to_view()
-
-    def fit_to_view(self):
-        if self._pixmap.isNull():
-            return
-
-        view_size = self.viewport().size()
-        pixmap_size = self._pixmap.size()
-
-        if pixmap_size.width() == 0 or pixmap_size.height() == 0:
-            return
-
-        width_ratio = view_size.width() / pixmap_size.width()
-        height_ratio = view_size.height() / pixmap_size.height()
-        self._fit_factor = max(0.0001, min(width_ratio, height_ratio))
-        self.zoom_factor = self._fit_factor
-        self._is_fit = True
-
-        self.setWidgetResizable(True)
-        scaled = self._pixmap.scaled(view_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.image_label.setPixmap(scaled)
-        self.image_label.resize(scaled.size())
-
-        h = self.horizontalScrollBar()
-        v = self.verticalScrollBar()
-        h.setValue((h.maximum() + h.minimum()) // 2)
-        v.setValue((v.maximum() + v.minimum()) // 2)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if not self._pixmap.isNull() and self._is_fit:
-            self.fit_to_view()
-
-    def wheelEvent(self, event):
-        if self._pixmap.isNull():
-            return
-
-        viewport = self.viewport().size()
-        label_w = max(1, self.image_label.width())
-        label_h = max(1, self.image_label.height())
-        hsb = self.horizontalScrollBar()
-        vsb = self.verticalScrollBar()
-        center_ratio_x = (hsb.value() + viewport.width() / 2) / label_w
-        center_ratio_y = (vsb.value() + viewport.height() / 2) / label_h
-
-        delta = event.angleDelta().y()
-        factor = 1.25 if delta > 0 else (1 / 1.25)
-
-        self.zoom_factor = max(self._min_zoom, min(self._max_zoom, self.zoom_factor * factor))
-        self._is_fit = False
-        self.update_zoom()
-
-        new_label_w = max(1, self.image_label.width())
-        new_label_h = max(1, self.image_label.height())
-        new_h_value = int(center_ratio_x * new_label_w - viewport.width() / 2)
-        new_v_value = int(center_ratio_y * new_label_h - viewport.height() / 2)
-        hsb.setValue(max(hsb.minimum(), min(hsb.maximum(), new_h_value)))
-        vsb.setValue(max(vsb.minimum(), min(vsb.maximum(), new_v_value)))
-
-    def update_zoom(self):
-        if self._pixmap.isNull():
-            return
-
-        self.setWidgetResizable(False)
-        orig = self._pixmap
-        new_w = max(1, int(orig.width() * self.zoom_factor))
-        new_h = max(1, int(orig.height() * self.zoom_factor))
-        scaled_pixmap = orig.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.image_label.setPixmap(scaled_pixmap)
-        self.image_label.resize(scaled_pixmap.size())
-
-    def mouseDoubleClickEvent(self, event):
-        if self._pixmap.isNull():
-            return
-        if self._is_fit:
-            self.zoom_factor = max(self._min_zoom, min(self._max_zoom, 1.0))
-            self._is_fit = False
-            self.update_zoom()
-        else:
-            self.fit_to_view()
 
 class IL2CampaignAnalyzer(QMainWindow):
     def __init__(self):
@@ -1102,11 +829,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         missions_layout.addWidget(splitter)
         self.tabs.addTab(self.tab_missions, 'Missões')
 
-        self.tab_map = QWidget()
-        map_layout = QVBoxLayout(self.tab_map)
-        self.map_viewer = MapViewer()
-        map_layout.addWidget(self.map_viewer)
-        self.tabs.addTab(self.tab_map, "Mapa da Carreira")
+
 
         self.tab_aces = QWidget()
         aces_layout = QVBoxLayout(self.tab_aces)
@@ -1155,20 +878,7 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.statusBar().showMessage("Dados carregados com sucesso!", 5000)
         QApplication.processEvents()
 
-        try:
-            map_output_path = os.path.join(tempfile.gettempdir(), "Mapa_de_Carreira_Gerado.png")
-            success = self.report_generator.gerar_mapa_de_carreira(
-                missoes=self.current_data.get('missions', []),
-                output_path=map_output_path,
-                highlight_mission_index=-1
-            )
-            if success and os.path.exists(map_output_path):
-                self.map_viewer.set_pixmap(map_output_path)
-            else:
-                self.map_viewer.image_label.setText("Não foi possível gerar o mapa de carreira.")
-        except Exception as e:
-            logger.exception(f"Erro ao gerar/exibir mapa: {e}")
-            self.map_viewer.image_label.setText("Erro ao gerar o mapa.")
+
 
     def on_sync_error(self, error_message):
         self.progress_bar.setVisible(False)
