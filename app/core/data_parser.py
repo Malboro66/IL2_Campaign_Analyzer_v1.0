@@ -1,90 +1,75 @@
-# app/core/data_parser.py
-import os
+from __future__ import annotations
 import json
-import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Dict, List, Any, Optional
 
+class PWCGFileNames:
+    CAMPAIGN = "Campaign.json"
+    ACES = "CampaignAces.json"
+    LOG = "CampaignLog.json"
+    PILOT_EXTRA = "pilot_extra.json"
+    DECORATIONS = "decorations.json"
+    MISSION_DATA_DIR = "MissionData"
+    COMBAT_REPORTS_DIR = "CombatReports"
+    MISSION_DATA_PATTERN = "*.MissionData.json"
+    COMBAT_REPORT_PATTERN = "*.CombatReport.json"
 
 class IL2DataParser:
-    """
-    Responsável por localizar e extrair informações brutas das campanhas
-    armazenadas na pasta PWCGFC.
-    """
+    def __init__(self, pwcg_root: str | Path) -> None:
+        self.base_path = Path(pwcg_root) / "User" / "Campaigns"
 
-    def __init__(self, pwcgfc_path: str):
-        self.pwcgfc_path = pwcgfc_path
-
-    # ----------------------------
-    # Localiza campanhas disponíveis
-    # ----------------------------
-    def get_campaigns(self):
-        """
-        Retorna uma lista de campanhas encontradas no diretório PWCGFC.
-        Cada campanha geralmente é uma subpasta.
-        """
-        if not self.pwcgfc_path or not os.path.isdir(self.pwcgfc_path):
+    def get_campaigns(self) -> List[str]:
+        if not self.base_path.exists():
             return []
+        return [d.name for d in self.base_path.iterdir() if d.is_dir()]
 
-        try:
-            campaigns = [
-                name for name in os.listdir(self.pwcgfc_path)
-                if os.path.isdir(os.path.join(self.pwcgfc_path, name))
-            ]
-            return campaigns
-        except Exception:
-            return []
-
-    # ----------------------------
-    # Lê um arquivo JSON de campanha
-    # ----------------------------
-    def parse_campaign_json(self, campaign_path: str):
-        """
-        Lê e retorna dados de campanha a partir de um JSON.
-        """
-        file_path = os.path.join(self.pwcgfc_path, campaign_path, "campaign.json")
-        if not os.path.exists(file_path):
+    def _safe_load_json(self, path: Path) -> Any:
+        if not path.exists():
             return {}
-
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with path.open(encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"[ERRO] Falha ao ler {file_path}: {e}")
+        except Exception:
             return {}
 
-    # ----------------------------
-    # Lê um arquivo XML de campanha
-    # ----------------------------
-    def parse_campaign_xml(self, campaign_path: str):
-        """
-        Lê e retorna dados de campanha a partir de um XML.
-        """
-        file_path = os.path.join(self.pwcgfc_path, campaign_path, "campaign.xml")
-        if not os.path.exists(file_path):
-            return {}
+    def _load_many_json(self, paths: List[Path]) -> List[Any]:
+        out: List[Any] = []
+        for p in paths:
+            try:
+                with p.open(encoding="utf-8") as f:
+                    out.append(json.load(f))
+            except Exception:
+                continue
+        return out
 
-        try:
-            tree = ET.parse(file_path)
-            root = tree.getroot()
-            return self._xml_to_dict(root)
-        except Exception as e:
-            print(f"[ERRO] Falha ao ler {file_path}: {e}")
-            return {}
-
-    # ----------------------------
-    # Converte XML em dicionário
-    # ----------------------------
-    def _xml_to_dict(self, element):
-        """
-        Converte recursivamente um elemento XML em dicionário.
-        """
-        data = {}
-        # Atributos
-        if element.attrib:
-            data.update(element.attrib)
-        # Filhos
-        for child in element:
-            data[child.tag] = self._xml_to_dict(child)
-        # Texto
-        if element.text and element.text.strip():
-            data["text"] = element.text.strip()
-        return data
+    def parse_campaign_json(self, campaign_name: str) -> Optional[Dict[str, Any]]:
+        campaign_dir = self.base_path / campaign_name
+        if not campaign_dir.exists():
+            return None
+        campaign = self._safe_load_json(campaign_dir / PWCGFileNames.CAMPAIGN)
+        aces = self._safe_load_json(campaign_dir / PWCGFileNames.ACES)
+        log = self._safe_load_json(campaign_dir / PWCGFileNames.LOG)
+        pilot_extra = self._safe_load_json(campaign_dir / PWCGFileNames.PILOT_EXTRA)
+        decorations = self._safe_load_json(campaign_dir / PWCGFileNames.DECORATIONS)
+        mission_dir = campaign_dir / PWCGFileNames.MISSION_DATA_DIR
+        mission_files = list(mission_dir.glob(PWCGFileNames.MISSION_DATA_PATTERN)) if mission_dir.exists() else []
+        missions = self._load_many_json(sorted(mission_files))
+        combat_dir = campaign_dir / PWCGFileNames.COMBAT_REPORTS_DIR
+        combat_files: List[Path] = []
+        if combat_dir.exists():
+            combat_files.extend(combat_dir.glob(PWCGFileNames.COMBAT_REPORT_PATTERN))
+            for sub in combat_dir.iterdir():
+                if sub.is_dir():
+                    combat_files.extend(sub.glob(PWCGFileNames.COMBAT_REPORT_PATTERN))
+        combat_reports = self._load_many_json(sorted(combat_files))
+        return {
+            "campaign": campaign,
+            "aces": aces,
+            "log": log,
+            "pilot_extra": pilot_extra,
+            "decorations": decorations,
+            "missions": missions,
+            "combat_reports": combat_reports,
+            "campaign_name": campaign_name,
+            "campaign_path": str(campaign_dir),
+        }

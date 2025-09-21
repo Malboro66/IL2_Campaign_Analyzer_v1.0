@@ -1,33 +1,29 @@
-# app/core/notifications.py
-from PyQt5.QtWidgets import QMessageBox, QSystemTrayIcon, QStyle
+from __future__ import annotations
 from PyQt5.QtCore import QObject, pyqtSignal
-
+from PyQt5.QtWidgets import QSystemTrayIcon, QStyle, QApplication
 
 class NotificationCenter(QObject):
-    # Sinal global para notificação (texto + nível)
     notify = pyqtSignal(str, str)
-
-    def __init__(self, parent=None):
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self.tray = None
-
-    def setup_tray(self, app):
-        """Cria ícone na bandeja do sistema para notificações"""
-        self.tray = QSystemTrayIcon(app.style().standardIcon(QStyle.SP_ComputerIcon))
-        self.tray.setToolTip("IL-2 Campaign Analyzer")
-        self.tray.show()
-
-    def send(self, message, level="info"):
-        """Dispara notificação"""
+        self.tray: QSystemTrayIcon | None = None
+    def setup_tray(self, app: QApplication) -> None:
+        try:
+            icon = app.style().standardIcon(QStyle.SP_ComputerIcon)
+            self.tray = QSystemTrayIcon(icon)
+            self.tray.setToolTip("IL-2 Campaign Analyzer")
+            self.tray.show()
+        except Exception:
+            self.tray = None
+    def send(self, message: str, level: str = "info") -> None:
         self.notify.emit(message, level)
-        if self.tray:
-            icon = QSystemTrayIcon.Information
-            if level == "warning":
-                icon = QSystemTrayIcon.Warning
-            elif level == "error":
-                icon = QSystemTrayIcon.Critical
+        if not self.tray: return
+        icon = QSystemTrayIcon.Information
+        if level == "warning": icon = QSystemTrayIcon.Warning
+        elif level in ("error", "critical"): icon = QSystemTrayIcon.Critical
+        try:
             self.tray.showMessage("IL-2 Campaign Analyzer", message, icon, 5000)
+        except Exception:
+            pass
 
-
-# Instância global
 notification_center = NotificationCenter()
