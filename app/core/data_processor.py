@@ -20,18 +20,20 @@ def _safe_int(v: Any) -> int:
 
 class IL2DataProcessor:
     """
-    Processa dados do PWCG/IL-2 e entrega um schema consumido pela UI.
-    Prioridades de origem para membros do esquadrão:
-      1) Personnel/<squadronId>.json (catálogo)
-      2) missionPlanes da missão correspondente
-      3) fallback pelos nomes do debrief
+    Processa dados do PWCG/IL-2 para a UI:
+      - Deriva squadronId via MissionData (header e missionPlanes do jogador)
+      - Monta lista de missões e companheiros (apenas do mesmo esquadrão do jogador)
+      - Lê membros do esquadrão de Personnel/<id>.json com tratamento de aliases
+      - Enriquecimento de missões com CombatReports e extração de nomes
+      - Indexa e filtra notificações por lado, data e tipo (esquadrão vs outras)
+      - Lê a patente do jogador (rank) do catálogo Personnel do esquadrão
     """
 
     def __init__(self, pwcg_root: str) -> None:
         self.parser = IL2DataParser(pwcg_root)
         self.pwcg_root = Path(pwcg_root)
 
-    # API
+    # ---------------- API ----------------
     def get_campaigns(self) -> List[str]:
         return self.parser.get_campaigns()
 
@@ -45,8 +47,6 @@ class IL2DataProcessor:
         pilot_name = campaign.get("name") or campaign.get("pilotName") or "Desconhecido"
         product = campaign.get("product")
 
-        missions = self._build_missions(raw, pilot_serial)
-
         # Descobrir squadronId: Campaign.json -> MissionData header -> missionPlanes do jogador
         squadron_id = campaign.get("squadronId") or campaign.get("referencePlayerSquadronId")
         if not squadron_id:
@@ -54,14 +54,26 @@ class IL2DataProcessor:
         if not squadron_id and pilot_serial is not None:
             squadron_id = self._extract_squadron_id_from_planes(raw, pilot_serial)
 
+        # Missoes normalizadas (filtrando squadmates pelo squadronId do jogador)
+        missions = self._build_missions(raw, pilot_serial, squadron_id)
+
         # Derivações básicas
         squadron_name = self._first_non_empty([m.get("squadron") for m in missions]) or "N/A"
         aircraft_type = self._first_non_empty([m.get("aircraft") for m in missions]) or "N/A"
 
+        # Patente do jogador via Personnel/<id>.json, com fallbacks
+        player_rank = self._get_player_rank(
+            campaign_name=campaign_name,
+            campaign=campaign,
+            squadron_id=squadron_id,
+            pilot_serial=pilot_serial,
+            pilot_name=pilot_name,
+        )
+
         pilot = {
             "name": pilot_name,
             "serial": pilot_serial,
-            "rank": "NA",
+            "rank": player_rank or "N/A",
             "squadron": squadron_name,
             "aircraft": aircraft_type,
             "kills": 0,
@@ -79,11 +91,17 @@ class IL2DataProcessor:
 
         aces = self._build_aces(raw)
         logs = self._build_logs(raw)
-
-        # Enriquecer missões com combat reports
         self._enrich_missions_with_reports(missions, raw)
 
-        # Construir membros
+        # Notificações: lado + índice por data (esquadrão vs outras), filtrando apenas o lado da campanha
+        side = self._infer_side(campaign)
+        notifications_index = self._build_notifications_index(
+            logs=logs,
+            squadron_id=squadron_id,
+            side=side,
+        )
+
+        # Membros do esquadrão
         squadron_members = self._build_squadron_members(
             raw=raw,
             campaign_name=campaign_name,
@@ -101,11 +119,17 @@ class IL2DataProcessor:
             "aces": aces,
             "logs": logs,
             "squadron_members": squadron_members,
+            "notifications_index": notifications_index,
             "raw": raw,
         }
 
-    # Builders
-    def _build_missions(self, raw: Dict[str, Any], player_serial: Optional[int]) -> List[Dict[str, Any]]:
+    # ------------- Builders -------------
+    def _build_missions(
+        self,
+        raw: Dict[str, Any],
+        player_serial: Optional[int],
+        player_squadron_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for m in raw.get("missions", []) or []:
             header = m.get("missionHeader", {}) or {}
@@ -125,7 +149,13 @@ class IL2DataProcessor:
                     pdata = pdata or {}
                     name = pdata.get("pilotName")
                     serial = pdata.get("pilotSerialNumber")
-                    if name and (player_serial is None or serial != player_serial):
+                    sqid = pdata.get("squadronId") or pdata.get("squadronID")
+                    # Apenas companheiros do MESMO esquadrão do jogador
+                    if (
+                        name
+                        and (player_serial is None or serial != player_serial)
+                        and (player_squadron_id is None or sqid == player_squadron_id)
+                    ):
                         squadmates.append(name)
 
             out.append({
@@ -176,7 +206,7 @@ class IL2DataProcessor:
                     })
         return out
 
-    # Squadron members (Personnel + missionPlanes + fallback)
+    # ------------- Squadron members (Personnel + missionPlanes + fallback) -------------
     def _build_squadron_members(
         self,
         raw: Dict[str, Any],
@@ -189,24 +219,25 @@ class IL2DataProcessor:
     ) -> List[Dict[str, Any]]:
         members: List[Dict[str, Any]] = []
 
-        # 1) Catálogo
+        # 1) Catálogo Personnel/<id>.json
         catalog = self._load_squadron_catalog(campaign_name, squadron_id) if squadron_id else {}
         if catalog:
             for p in self._normalize_personnel_catalog(catalog):
                 name = p.get("name") or p.get("pilotName") or "N/A"
                 rank = p.get("rank") or p.get("pilotRank") or p.get("pilotRankText") or "N/A"
                 missions_flown = (
-                    p.get("missions") or p.get("missionsFlown") or p.get("missionFlown") or p.get("missionCount") or
-                    p.get("sorties") or p.get("numMissions") or 0
+                    p.get("missions") or p.get("missionsFlown") or p.get("missionFlown") or p.get("missionCount")
+                    or p.get("sorties") or p.get("numMissions") or 0
                 )
                 victories_raw = p.get("victories")
-                if isinstance(victories_raw, (list, tuple, dict)):
-                    victories = len(victories_raw)
-                else:
-                    victories = _safe_int(victories_raw or p.get("kills") or p.get("victoryCount") or 0)
+                victories = len(victories_raw) if isinstance(victories_raw, (list, tuple, dict)) else _safe_int(
+                    victories_raw or p.get("kills") or p.get("victoryCount") or 0
+                )
                 status_code = p.get("pilotActiveStatus")
                 status_text = p.get("status") or p.get("pilotActiveStatusText")
-                status = status_text if isinstance(status_text, str) and status_text.strip() else ("Ativo" if status_code is None else self._get_pilot_status(status_code))
+                status = status_text if isinstance(status_text, str) and status_text.strip() else (
+                    "Ativo" if status_code is None else self._get_pilot_status(status_code)
+                )
                 members.append({
                     "name": name,
                     "rank": rank,
@@ -215,7 +246,7 @@ class IL2DataProcessor:
                     "status": status,
                 })
 
-        # 2) missionPlanes (se não houve catálogo)
+        # 2) missionPlanes, se catálogo não disponível
         if not members:
             raw_missions = raw.get("missions", []) or []
             by_date: Dict[str, List[Dict[str, Any]]] = {}
@@ -267,11 +298,10 @@ class IL2DataProcessor:
                 "status": "Jogador",
             })
 
-        # Ordenar por missões e vitórias
         members.sort(key=lambda x: (x.get("missions_flown", 0), x.get("victories", 0)), reverse=True)
         return members
 
-    # Personnel
+    # ------------- Personnel -------------
     def _load_squadron_catalog(self, campaign_name: str, squadron_id: Optional[int]) -> Dict[str, Any] | List[Any]:
         if not squadron_id:
             return {}
@@ -289,6 +319,13 @@ class IL2DataProcessor:
             return {}
 
     def _normalize_personnel_catalog(self, catalog: Any) -> List[Dict[str, Any]]:
+        """
+        Aceita diferentes formatos comuns:
+          - lista direta de pilotos
+          - dict com 'pilots' | 'members' | 'personnel' | 'roster' | 'squadronMemberCollection'
+          - listas agrupadas por status: 'active','reserve','wounded','kia','mia','transfer','retired'
+          - dict plano id->objeto piloto
+        """
         pilots: List[Dict[str, Any]] = []
 
         if isinstance(catalog, list):
@@ -322,7 +359,7 @@ class IL2DataProcessor:
                 out.append(p)
         return out
 
-    # Extrações de squadronId
+    # ------------- Extrações de squadronId -------------
     def _extract_squadron_id_from_raw(self, raw: Dict[str, Any]) -> Optional[int]:
         for rm in (raw.get("missions") or [])[::-1]:
             hdr = (rm.get("missionHeader") or {})
@@ -344,7 +381,124 @@ class IL2DataProcessor:
                             return sid
         return None
 
-    # Enriquecimento de missões
+    # ------------- Patente do jogador -------------
+    def _get_player_rank(
+        self,
+        campaign_name: str,
+        campaign: dict,
+        squadron_id: Optional[int],
+        pilot_serial: Optional[int],
+        pilot_name: str,
+    ) -> Optional[str]:
+        # 1) Tentar diretamente do campaign, se existir
+        for k in ("rank", "pilotRank", "rankText", "pilotRankText"):
+            v = (campaign or {}).get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+        # 2) Personnel/<id>.json: procurar por serial ou, fallback, por nome
+        if squadron_id:
+            catalog = self._load_squadron_catalog(campaign_name, squadron_id)
+            pilots = self._normalize_personnel_catalog(catalog) if catalog else []
+            if pilot_serial is not None:
+                for p in pilots:
+                    if str(p.get("serialNumber")) == str(pilot_serial):
+                        r = p.get("rank") or p.get("pilotRank") or p.get("pilotRankText")
+                        if isinstance(r, str) and r.strip():
+                            return r.strip()
+            pname = (pilot_name or "").strip().lower()
+            if pname:
+                for p in pilots:
+                    nm = str(p.get("name") or p.get("pilotName") or "").strip().lower()
+                    if nm == pname:
+                        r = p.get("rank") or p.get("pilotRank") or p.get("pilotRankText")
+                        if isinstance(r, str) and r.strip():
+                            return r.strip()
+
+        # 3) Sem fonte confiável
+        return None
+
+    # ------------- Notificações (lado + índice) -------------
+    def _infer_side(self, campaign: dict) -> str:
+        country = (campaign or {}).get("country") or (campaign or {}).get("nation") or ""
+        s = str(country).upper()
+        entente = {"GB", "UK", "ENGLAND", "BRITAIN", "FR", "FRANCE", "US", "USA", "UNITED STATES", "ENTENTE"}
+        central = {"DE", "GERMANY", "GER", "AT", "AUSTRIA", "AUSTRO-HUNGARIAN", "CENTRAL", "POWERS"}
+        if s in entente or any(k in s for k in entente):
+            return "ENTENTE"
+        if s in central or any(k in s for k in central):
+            return "CENTRAL"
+        return "ENTENTE"
+
+    @staticmethod
+    def _infer_side_by_squadron_id(sid: Any) -> Optional[str]:
+        """
+        Heurística por faixa:
+          - 30xxxx -> ENTENTE
+          - 40xxxx -> CENTRAL
+        """
+        try:
+            n = int(sid)
+        except Exception:
+            return None
+        if 300000 <= n < 400000:
+            return "ENTENTE"
+        if 400000 <= n < 500000:
+            return "CENTRAL"
+        return None
+
+    def _build_notifications_index(self, logs: List[dict], squadron_id: Optional[int], side: str) -> dict:
+        """
+        Estrutura:
+        {
+          "side": "ENTENTE"|"CENTRAL",
+          "by_date": {
+            "DD/MM/YYYY": {
+               "squadron": [ "texto", ... ],
+               "other": [ "texto", ... ]
+            }, ...
+          }
+        }
+        Mantém apenas entradas do lado da campanha e DESCARTA logs sem squadronId.
+        """
+        from collections import defaultdict
+        by_date = defaultdict(lambda: {"squadron": [], "other": []})
+        sid_str = str(squadron_id) if squadron_id is not None else None
+
+        for entry in logs or []:
+            entry_sid = entry.get("squadronId")
+            # Exigir squadronId para classificar lado; descartar se ausente
+            if entry_sid is None:
+                continue
+
+            entry_side = self._infer_side_by_squadron_id(entry_sid)
+            if entry_side and entry_side != side:
+                continue  # descartar notificação do lado oposto
+
+            # Normalizar data para DD/MM/YYYY
+            date_raw = entry.get("date") or ""
+            date = date_raw
+            if isinstance(date_raw, str) and len(date_raw) == 8 and date_raw.isdigit():
+                date = f"{date_raw[6:8]}/{date_raw[4:6]}/{date_raw[0:4]}"
+            elif isinstance(date_raw, str) and len(date_raw) == 10 and (date_raw[4] in "-/" and date_raw[7] in "-/"):
+                y, m, d = date_raw[0:4], date_raw[5:7], date_raw[8:10]
+                if y.isdigit() and m.isdigit() and d.isdigit():
+                    date = f"{d}/{m}/{y}"
+
+            text = (entry.get("text") or "").strip()
+            if not text:
+                continue
+
+            is_squadron = False
+            if sid_str and (str(entry_sid) == sid_str or sid_str in text):
+                is_squadron = True
+
+            (by_date[date]["squadron"] if is_squadron else by_date[date]["other"]).append(text)
+
+        ordered = dict(sorted(by_date.items(), key=lambda kv: tuple(reversed(kv[0].split("/")))))
+        return {"side": side, "by_date": ordered}
+
+    # ------------- Enriquecimento de missões -------------
     def _enrich_missions_with_reports(self, missions: List[Dict[str, Any]], raw: Dict[str, Any]) -> None:
         reports = raw.get("combat_reports") or []
         if not missions or not reports:
@@ -378,7 +532,7 @@ class IL2DataProcessor:
                     if names:
                         mission["squadmates"] = names
 
-    # Utils
+    # ------------- Utils -------------
     @staticmethod
     def _first_non_empty(values: List[Optional[str]]) -> Optional[str]:
         for v in values:
