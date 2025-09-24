@@ -1,178 +1,118 @@
-<<<<<<< HEAD
-# IL-2 Sturmovik Campaign Analyzer
+# IL-2 Campaign Analyzer
 
-Uma aplicação Python com interface gráfica para analisar dados de campanhas do IL-2 Sturmovik, exibir informações do piloto e esquadrão, listar ases, detalhar missões e permitir a exportação para PDF.
+An unofficial desktop application for parsing and analyzing campaign data from Pat Wilson's Campaign Generator (PWCG) for IL-2 Sturmovik.
 
-## Funcionalidades
+This tool provides a graphical user interface to visualize your pilot's career, track squadron statistics, view mission logs, and browse notable aces from your campaign.
 
-- **Seleção de Pasta PWCGFC**: Interface para selecionar e salvar o caminho da pasta PWCGFC
-- **Análise de Campanhas**: Carregamento e análise de múltiplas campanhas
-- **Perfil do Piloto**: Exibição de informações detalhadas do piloto com campos complementares
-- **Informações do Esquadrão**: Dados do esquadrão e atividades recentes
-- **Lista de Ases**: Ranking dos pilotos com maior número de abates
-- **Histórico de Missões**: Detalhamento completo das missões realizadas
-- **Exportação PDF**: Geração de relatórios completos em formato PDF
+![Application Screenshot](https://raw.githubusercontent.com/your-repo/your-image.png) <!--- Placeholder for a future screenshot -->
 
-## Estrutura de Arquivos Analisados
+## Features
 
-A aplicação analisa os seguintes arquivos da pasta PWCGFC:
+-   **Campaign Data Visualization**: Load and process data from your PWCG campaign folders.
+-   **Pilot & Squadron Dashboard**: View at-a-glance statistics for your pilot and squadron.
+-   **Detailed Mission Logs**: Browse a complete history of all missions flown.
+-   **Campaign Aces**: See a list of the top-scoring aces in your campaign.
+-   **Advanced Notification Viewer**: Filter and search campaign event logs by date, category, keywords, and more.
+-   **Plugin Support**: Extend the application's functionality with custom tabs.
+-   **Data Export**: Generate `.txt` diaries and detailed PDF reports for missions and statistics.
 
-### Pasta Principal: `PWCGFC/User/Campaigns/[Nome_da_Campanha]/`
+## Requirements
 
-1. **Campaign.json**
-   - `name`: Nome do piloto
-   - `date`: Data atual da campanha
-   - `referencePlayerSerialNumber`: Número de referência do piloto
+-   **Python**: 3.8+
+-   **Operating System**: Windows, macOS, or Linux
+-   **Dependencies**: See `requirements.txt`
 
-2. **CampaignAces.json**
-   - Lista dos pilotos com maior número de abates
+## Installation
 
-3. **CampaignLog.json**
-   - `date`: Data das informações
-   - `log`: Informação do ocorrido
-   - `squadronId`: ID do esquadrão
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-repo/il2-campaign-analyzer.git
+    cd il2-campaign-analyzer
+    ```
 
-4. **CombatReports/[referencePlayerSerialNumber]/**
-   - Arquivos .json para cada missão com informações detalhadas
+2.  **Create and activate a virtual environment:**
+    ```bash
+    # For Windows
+    python -m venv venv
+    venv\Scripts\activate
 
-5. **MissionData/**
-   - Arquivos .json com dados específicos das missões
+    # For macOS/Linux
+    python3 -m venv venv
+    source venv/bin/activate
+    ```
 
-### Pasta de Missões: `IL-2 Sturmovik Battle of Stalingrad/data/Missions/PWCG/`
+3.  **Install the required dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-- Arquivos .mission com dados meteorológicos e condições de voo
+## Usage
 
-## Instalação
+1.  **Run the application:**
+    ```bash
+    python main_app.py
+    ```
 
-### Pré-requisitos
+2.  **Select PWCG Folder**:
+    -   On first launch, click **"Select PWCGFC Folder"**.
+    -   Navigate to your main PWCG installation directory (this is the folder that contains the `User` subfolder). The application will save this path for future sessions.
 
-- Python 3.11 ou superior
-- Sistema operacional Windows, Linux ou macOS
+3.  **Choose a Campaign**:
+    -   Use the dropdown menu to select the campaign you wish to analyze.
 
-### Instalação das Dependências
+4.  **Sync Data**:
+    -   Click the **"Sincronizar Dados"** (Sync Data) button to load and process all the data for the selected campaign.
 
-1. Clone ou baixe o projeto
-2. Navegue até a pasta do projeto
-3. Crie um ambiente virtual:
-   ```bash
-   python -m venv venv
-   ```
-4. Ative o ambiente virtual:
-   - Windows: `venv\Scripts\activate`
-   - Linux/macOS: `source venv/bin/activate`
-5. Instale as dependências:
-   ```bash
-   pip install -r requirements.txt
-   ```
+5.  **Explore**:
+    -   Navigate through the different tabs to view pilot information, mission details, squadron rosters, and more.
 
-## Uso
+## Project Structure
 
-### Executando a Aplicação
+The project is organized into several key modules:
+
+```
+.
+├── app/
+│   ├── core/         # Core logic: data parsing, processing, reporting
+│   ├── plugins/      # Directory for custom plugins
+│   ├── resoucers/    # Typo: Should be 'resources' (for images, etc.)
+│   └── ui/           # UI components (tabs and widgets)
+├── main_app.py       # Main application entry point
+├── requirements.txt  # Project dependencies
+└── README.md         # This file
+```
+
+### Data Flow
+
+1.  **`main_app.py`**: Manages the main window, UI controls, and initiates data loading.
+2.  **`app/core/data_parser.py`**: Reads and parses the raw `.json` files from the PWCG campaign directory.
+3.  **`app/core/data_processor.py`**: Takes the raw data, cleans it, enriches it, and transforms it into a structured format suitable for the UI.
+4.  **`app/ui/*.py`**: The various tab widgets receive the processed data and display it to the user.
+5.  **`app/core/signals.py`**: A global signal system used to communicate events (like item selection) between different UI components without direct coupling.
+
+## For Developers
+
+### Creating a Plugin
+
+You can extend the application by creating your own tabs.
+
+1.  Create a new Python file in the `app/plugins/` directory (e.g., `my_plugin.py`).
+2.  Inside the file, create a `QWidget` subclass for your tab's content.
+3.  Implement a function named `register_plugin(tab_manager)`.
+4.  Inside this function, call `tab_manager.register_tab("My Tab Name", YourWidgetClass)`.
+
+See `app/plugins/example_tab.py` for a working example.
+
+### Running Tests
+
+(Note: Test framework setup is pending.)
+
+To run the included tests:
 
 ```bash
-python main_app.py
+# Placeholder for test execution command
 ```
 
-### Passos para Usar
+## License
 
-1. **Selecionar Pasta PWCGFC**
-   - Clique em "Selecionar Pasta PWCGFC"
-   - Navegue até a pasta onde está instalado o PWCGFC
-   - Selecione a pasta principal do PWCGFC
-
-2. **Escolher Campanha**
-   - No dropdown "Campanha", selecione a campanha que deseja analisar
-   - As campanhas disponíveis são carregadas automaticamente
-
-3. **Sincronizar Dados**
-   - Clique em "Sincronizar Dados" para carregar e processar os dados da campanha
-   - Aguarde o processamento (indicado pela barra de progresso)
-
-4. **Navegar pelas Abas**
-   - **Pilot Profile**: Informações do piloto e campos para dados complementares
-   - **Squad**: Informações do esquadrão e atividades recentes
-   - **Aces**: Lista dos ases ordenada por número de vitórias
-   - **Missions**: Histórico detalhado das missões
-
-5. **Adicionar Informações Complementares**
-   - Na aba "Pilot Profile", preencha data de nascimento, local de nascimento
-   - Anexe uma foto do piloto (opcional)
-   - Clique em "Salvar Informações Complementares"
-
-6. **Exportar Relatório**
-   - Clique em "Exportar para PDF" para gerar um relatório completo
-   - Escolha o local e nome do arquivo PDF
-
-## Estrutura do Projeto
-
-```
-il2_campaign_analyzer/
-├── main_app.py          # Aplicação principal com interface gráfica
-├── data_parser.py       # Módulo para parsing dos arquivos JSON e .mission
-├── data_processor.py    # Módulo para processamento e filtragem dos dados
-├── pdf_generator.py     # Módulo para geração de relatórios PDF
-├── test_app.py         # Testes da aplicação
-├── requirements.txt    # Dependências do projeto
-├── README.md          # Documentação
-└── pilot_info.json    # Arquivo gerado para salvar informações complementares
-```
-
-## Testes
-
-Para executar os testes da aplicação:
-
-```bash
-python test_app.py
-```
-
-## Geração de Executável
-
-Para criar um executável standalone:
-
-```bash
-pyinstaller --onefile --windowed main_app.py
-```
-
-O executável será gerado na pasta `dist/`.
-
-## Limitações Conhecidas
-
-- A aplicação assume estruturas específicas dos arquivos JSON do PWCGFC
-- Arquivos .mission são procurados por nome do piloto e podem não ser encontrados se a nomenclatura for diferente
-- A interface gráfica requer um ambiente com suporte a PyQt5
-
-## Solução de Problemas
-
-### Erro "Qt platform plugin"
-Se encontrar erros relacionados ao Qt no Linux:
-```bash
-sudo apt-get install python3-pyqt5
-```
-
-### Pasta PWCGFC não encontrada
-Certifique-se de que está selecionando a pasta raiz do PWCGFC, que deve conter a subpasta `User/Campaigns/`.
-
-### Dados não carregam
-Verifique se:
-- A campanha selecionada possui os arquivos necessários
-- Os arquivos JSON não estão corrompidos
-- As permissões de leitura estão adequadas
-
-## Contribuição
-
-Para contribuir com o projeto:
-
-1. Faça um fork do repositório
-2. Crie uma branch para sua feature
-3. Implemente as mudanças
-4. Execute os testes
-5. Submeta um pull request
-
-## Licença
-
-Este projeto é distribuído sob licença MIT. Veja o arquivo LICENSE para mais detalhes.
-
-## Suporte
-
-Para suporte ou dúvidas, abra uma issue no repositório do projeto.
-=======
+This project is licensed under the MIT License. See the `LICENSE` file for details.

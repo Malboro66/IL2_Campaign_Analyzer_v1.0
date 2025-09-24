@@ -1,3 +1,17 @@
+"""
+Processes raw PWCG (Pat Wilson's Campaign Generator) data into a structured
+format for the IL-2 Campaign Analyzer application.
+
+This module takes the parsed JSON data and performs several steps to enrich,
+normalize, and structure it for easy consumption by the user interface.
+Key responsibilities include:
+  - Deriving the player's squadron ID from various data sources.
+  - Building a clean list of missions and squadron members.
+  - Reading and normalizing squadron personnel data.
+  - Enriching mission data with combat reports.
+  - Indexing and filtering campaign log notifications.
+  - Determining the player's rank and other key details.
+"""
 from __future__ import annotations
 
 from typing import Dict, Any, List, Optional, Iterable
@@ -8,6 +22,15 @@ from .data_parser import IL2DataParser
 
 
 def _safe_int(v: Any) -> int:
+    """
+    Safely convert a value to an integer.
+
+    Args:
+        v (Any): The value to convert.
+
+    Returns:
+        int: The converted integer, or 0 if conversion fails.
+    """
     try:
         return int(v)
     except Exception:
@@ -20,24 +43,44 @@ def _safe_int(v: Any) -> int:
 
 class IL2DataProcessor:
     """
-    Processa dados do PWCG/IL-2 para a UI:
-      - Deriva squadronId via MissionData (header e missionPlanes do jogador)
-      - Monta lista de missões e companheiros (apenas do mesmo esquadrão do jogador)
-      - Lê membros do esquadrão de Personnel/<id>.json com tratamento de aliases
-      - Enriquecimento de missões com CombatReports e extração de nomes
-      - Indexa e filtra notificações por lado, data e tipo (esquadrão vs outras)
-      - Lê a patente do jogador (rank) do catálogo Personnel do esquadrão
+    Processes raw PWCG campaign data for the analyzer UI.
     """
 
     def __init__(self, pwcg_root: str) -> None:
+        """
+        Initialize the data processor.
+
+        Args:
+            pwcg_root (str): The root path of the PWCG installation.
+        """
         self.parser = IL2DataParser(pwcg_root)
         self.pwcg_root = Path(pwcg_root)
 
     # ---------------- API ----------------
     def get_campaigns(self) -> List[str]:
+        """
+        Get a list of available campaign names.
+
+        Returns:
+            List[str]: A list of campaign names.
+        """
         return self.parser.get_campaigns()
 
     def process_campaign(self, campaign_name: str) -> Dict[str, Any]:
+        """
+        Process all data for a given campaign.
+
+        This is the main entry point for processing. It orchestrates the
+        parsing, normalization, and enrichment of all campaign data.
+
+        Args:
+            campaign_name (str): The name of the campaign to process.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the fully processed
+                            and structured campaign data. Returns an empty
+                            dictionary if the campaign cannot be parsed.
+        """
         raw = self.parser.parse_campaign_json(campaign_name)
         if not raw:
             return {}
@@ -130,6 +173,19 @@ class IL2DataProcessor:
         player_serial: Optional[int],
         player_squadron_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
+        """
+        Build a normalized list of missions from raw data.
+
+        Filters squadmates to include only those from the player's squadron.
+
+        Args:
+            raw (Dict[str, Any]): The raw campaign data.
+            player_serial (Optional[int]): The player's serial number.
+            player_squadron_id (Optional[int]): The player's squadron ID.
+
+        Returns:
+            List[Dict[str, Any]]: A list of normalized mission dictionaries.
+        """
         out: List[Dict[str, Any]] = []
         for m in raw.get("missions", []) or []:
             header = m.get("missionHeader", {}) or {}
@@ -173,6 +229,15 @@ class IL2DataProcessor:
         return out
 
     def _build_aces(self, raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Build a normalized list of campaign aces.
+
+        Args:
+            raw (Dict[str, Any]): The raw campaign data.
+
+        Returns:
+            List[Dict[str, Any]]: A list of ace dictionaries.
+        """
         aces_root = raw.get("aces") or {}
         aces_map = aces_root.get("acesInCampaign") or aces_root.get("aces") or {}
         out: List[Dict[str, Any]] = []
@@ -193,6 +258,15 @@ class IL2DataProcessor:
         return out
 
     def _build_logs(self, raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Build a flat list of campaign log entries from the raw data.
+
+        Args:
+            raw (Dict[str, Any]): The raw campaign data.
+
+        Returns:
+            List[Dict[str, Any]]: A list of log entry dictionaries.
+        """
         by_date = (raw.get("log") or {}).get("campaignLogsByDate") or {}
         out: List[Dict[str, Any]] = []
         for dkey in sorted(by_date.keys()):
@@ -217,6 +291,25 @@ class IL2DataProcessor:
         pilot_serial: Optional[int],
         pilot_total_missions: int,
     ) -> List[Dict[str, Any]]:
+        """
+        Build a comprehensive list of squadron members.
+
+        Tries to load members from the squadron's personnel file first.
+        If that fails, it falls back to data from the last mission, and
+        finally to a simple list of squadmates from the last mission brief.
+
+        Args:
+            raw (Dict[str, Any]): The raw campaign data.
+            campaign_name (str): The name of the campaign.
+            squadron_id (Optional[int]): The player's squadron ID.
+            missions (List[Dict[str, Any]]): The list of normalized missions.
+            pilot_name (str): The player's name.
+            pilot_serial (Optional[int]): The player's serial number.
+            pilot_total_missions (int): The total number of missions flown by the player.
+
+        Returns:
+            List[Dict[str, Any]]: A sorted list of squadron member dictionaries.
+        """
         members: List[Dict[str, Any]] = []
 
         # 1) Catálogo Personnel/<id>.json
@@ -303,6 +396,16 @@ class IL2DataProcessor:
 
     # ------------- Personnel -------------
     def _load_squadron_catalog(self, campaign_name: str, squadron_id: Optional[int]) -> Dict[str, Any] | List[Any]:
+        """
+        Load the personnel file for a given squadron.
+
+        Args:
+            campaign_name (str): The name of the campaign.
+            squadron_id (Optional[int]): The ID of the squadron.
+
+        Returns:
+            A dictionary or list with the personnel data, or an empty dict if not found.
+        """
         if not squadron_id:
             return {}
         candidate = (
@@ -320,11 +423,15 @@ class IL2DataProcessor:
 
     def _normalize_personnel_catalog(self, catalog: Any) -> List[Dict[str, Any]]:
         """
-        Aceita diferentes formatos comuns:
-          - lista direta de pilotos
-          - dict com 'pilots' | 'members' | 'personnel' | 'roster' | 'squadronMemberCollection'
-          - listas agrupadas por status: 'active','reserve','wounded','kia','mia','transfer','retired'
-          - dict plano id->objeto piloto
+        Normalize a squadron personnel catalog into a flat list of pilots.
+
+        Handles various common JSON structures for personnel data.
+
+        Args:
+            catalog (Any): The raw personnel data.
+
+        Returns:
+            List[Dict[str, Any]]: A deduplicated list of pilot dictionaries.
         """
         pilots: List[Dict[str, Any]] = []
 
@@ -361,6 +468,17 @@ class IL2DataProcessor:
 
     # ------------- Extrações de squadronId -------------
     def _extract_squadron_id_from_raw(self, raw: Dict[str, Any]) -> Optional[int]:
+        """
+        Attempt to extract the squadron ID from the raw mission data.
+
+        Iterates backwards through missions to find the most recent ID.
+
+        Args:
+            raw (Dict[str, Any]): The raw campaign data.
+
+        Returns:
+            Optional[int]: The extracted squadron ID, or None if not found.
+        """
         for rm in (raw.get("missions") or [])[::-1]:
             hdr = (rm.get("missionHeader") or {})
             sid = hdr.get("squadronId") or hdr.get("squadronID") or rm.get("squadronId") or rm.get("squadronID")
@@ -369,6 +487,18 @@ class IL2DataProcessor:
         return None
 
     def _extract_squadron_id_from_planes(self, raw: Dict[str, Any], pilot_serial: int) -> Optional[int]:
+        """
+        Attempt to extract the squadron ID from the mission planes data.
+
+        Finds the player in the mission plane list to get their squadron ID.
+
+        Args:
+            raw (Dict[str, Any]): The raw campaign data.
+            pilot_serial (int): The player's serial number.
+
+        Returns:
+            Optional[int]: The extracted squadron ID, or None if not found.
+        """
         for rm in (raw.get("missions") or [])[::-1]:
             mission_planes = rm.get("missionPlanes") or {}
             if isinstance(mission_planes, dict):
@@ -390,6 +520,21 @@ class IL2DataProcessor:
         pilot_serial: Optional[int],
         pilot_name: str,
     ) -> Optional[str]:
+        """
+        Determine the player's rank using multiple data sources.
+
+        Checks the main campaign file, then the squadron personnel file.
+
+        Args:
+            campaign_name (str): The name of the campaign.
+            campaign (dict): The parsed campaign data.
+            squadron_id (Optional[int]): The player's squadron ID.
+            pilot_serial (Optional[int]): The player's serial number.
+            pilot_name (str): The player's name.
+
+        Returns:
+            Optional[str]: The player's rank, or None if not found.
+        """
         # 1) Tentar diretamente do campaign, se existir
         for k in ("rank", "pilotRank", "rankText", "pilotRankText"):
             v = (campaign or {}).get(k)
@@ -420,6 +565,15 @@ class IL2DataProcessor:
 
     # ------------- Notificações (lado + índice) -------------
     def _infer_side(self, campaign: dict) -> str:
+        """
+        Infer the campaign side (e.g., ENTENTE, CENTRAL) from the country name.
+
+        Args:
+            campaign (dict): The parsed campaign data.
+
+        Returns:
+            str: The inferred side, defaulting to "ENTENTE".
+        """
         country = (campaign or {}).get("country") or (campaign or {}).get("nation") or ""
         s = str(country).upper()
         entente = {"GB", "UK", "ENGLAND", "BRITAIN", "FR", "FRANCE", "US", "USA", "UNITED STATES", "ENTENTE"}
@@ -433,9 +587,16 @@ class IL2DataProcessor:
     @staticmethod
     def _infer_side_by_squadron_id(sid: Any) -> Optional[str]:
         """
-        Heurística por faixa:
-          - 30xxxx -> ENTENTE
-          - 40xxxx -> CENTRAL
+        Infer the side based on a heuristic squadron ID range.
+
+        - 300000s -> ENTENTE
+        - 400000s -> CENTRAL
+
+        Args:
+            sid (Any): The squadron ID.
+
+        Returns:
+            Optional[str]: The inferred side, or None.
         """
         try:
             n = int(sid)
@@ -449,17 +610,18 @@ class IL2DataProcessor:
 
     def _build_notifications_index(self, logs: List[dict], squadron_id: Optional[int], side: str) -> dict:
         """
-        Estrutura:
-        {
-          "side": "ENTENTE"|"CENTRAL",
-          "by_date": {
-            "DD/MM/YYYY": {
-               "squadron": [ "texto", ... ],
-               "other": [ "texto", ... ]
-            }, ...
-          }
-        }
-        Mantém apenas entradas do lado da campanha e DESCARTA logs sem squadronId.
+        Build a structured index of notifications from campaign logs.
+
+        Filters logs for the correct side, groups them by date, and
+        separates them into 'squadron' and 'other' categories.
+
+        Args:
+            logs (List[dict]): The list of log entries.
+            squadron_id (Optional[int]): The player's squadron ID.
+            side (str): The player's campaign side.
+
+        Returns:
+            dict: A structured dictionary of notifications.
         """
         from collections import defaultdict
         by_date = defaultdict(lambda: {"squadron": [], "other": []})
@@ -500,6 +662,15 @@ class IL2DataProcessor:
 
     # ------------- Enriquecimento de missões -------------
     def _enrich_missions_with_reports(self, missions: List[Dict[str, Any]], raw: Dict[str, Any]) -> None:
+        """
+        Enrich the normalized missions list with data from combat reports.
+
+        Matches reports to missions by date and other metadata.
+
+        Args:
+            missions (List[Dict[str, Any]]): The list of normalized missions.
+            raw (Dict[str, Any]): The raw campaign data containing combat reports.
+        """
         reports = raw.get("combat_reports") or []
         if not missions or not reports:
             return
@@ -535,6 +706,15 @@ class IL2DataProcessor:
     # ------------- Utils -------------
     @staticmethod
     def _first_non_empty(values: List[Optional[str]]) -> Optional[str]:
+        """
+        Return the first non-empty string from a list.
+
+        Args:
+            values (List[Optional[str]]): A list of strings.
+
+        Returns:
+            Optional[str]: The first non-empty string, or None.
+        """
         for v in values:
             if isinstance(v, str) and v.strip():
                 return v
@@ -542,6 +722,15 @@ class IL2DataProcessor:
 
     @staticmethod
     def _extract_names_from_hareport(text: str) -> List[str]:
+        """
+        Extract pilot names from a "Hardest hit" combat report narrative.
+
+        Args:
+            text (str): The combat report text.
+
+        Returns:
+            List[str]: A list of extracted pilot names.
+        """
         if not text:
             return []
         lines = [ln.strip() for ln in text.splitlines()]
@@ -567,6 +756,15 @@ class IL2DataProcessor:
 
     @staticmethod
     def _get_pilot_status(code: Any) -> str:
+        """
+        Convert a pilot status code to a human-readable string.
+
+        Args:
+            code (Any): The status code.
+
+        Returns:
+            str: The human-readable status.
+        """
         try:
             code = int(code)
         except Exception:
