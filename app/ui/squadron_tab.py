@@ -1,5 +1,6 @@
-# squadron_tab.py
-
+"""
+Defines the UI tab for displaying squadron member information.
+"""
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
@@ -8,20 +9,32 @@ from PyQt5.QtCore import pyqtSignal
 
 class SquadronTab(QWidget):
     """
-    Aba de Esquadrão.
-    Aceita:
-      - lista de membros: [{name, rank, victories, missions_flown, status}, ...]
-      - OU dicionário-resumo: {"name","aircraft","total_missions","total_kills"}
-      - OU None/[] (vazio)
+    A widget to display a table of all pilots in the player's squadron.
+
+    This tab shows details for each pilot, including their rank, victories,
+    missions flown, and current status.
+
+    Signals:
+        member_selected (pyqtSignal): Emitted when a squadron member is
+                                      selected in the table.
     """
-    member_selected = pyqtSignal(dict)  # emite quando um membro é selecionado
+    member_selected = pyqtSignal(dict)
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        """
+        Initialize the SquadronTab.
+
+        Args:
+            parent (QWidget | None, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self.squadron_data = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        """
+        Set up the user interface for the tab.
+        """
         layout = QVBoxLayout(self)
 
         self.table = QTableWidget()
@@ -35,25 +48,18 @@ class SquadronTab(QWidget):
 
         layout.addWidget(self.table)
 
-    def update_data(self, squadron) -> None:
+    def update_data(self, squadron_members: list) -> None:
         """
-        Atualiza a tabela com a estrutura recebida.
-        """
-        # Se vier um dicionário-resumo, transforme em uma linha "resumo"
-        if isinstance(squadron, dict):
-            summary = squadron
-            squadron = [{
-                "name": summary.get("name", "Esquadrão"),
-                "rank": "-",  # não disponível no resumo
-                "victories": summary.get("total_kills", 0),
-                "missions_flown": summary.get("total_missions", 0),
-                "status": summary.get("aircraft", "N/A"),
-            }]
-        elif not isinstance(squadron, list):
-            squadron = []
+        Update the table with a new list of squadron members.
 
-        # Mantenha apenas itens dicionário
-        self.squadron_data = [m for m in (squadron or []) if isinstance(m, dict)]
+        Args:
+            squadron_members (list): A list of dictionaries, where each
+                                     dictionary represents a pilot.
+        """
+        if not isinstance(squadron_members, list):
+            squadron_members = []
+
+        self.squadron_data = [m for m in squadron_members if isinstance(m, dict)]
         self.table.setRowCount(len(self.squadron_data))
 
         for row, member in enumerate(self.squadron_data):
@@ -64,6 +70,11 @@ class SquadronTab(QWidget):
             self.table.setItem(row, 4, QTableWidgetItem(str(member.get("status", ""))))
 
     def _on_selection_changed(self) -> None:
+        """
+        Handle the selection of an item in the table.
+
+        Emits the `member_selected` signal with the data of the selected pilot.
+        """
         items = self.table.selectedItems()
         if not items:
             return

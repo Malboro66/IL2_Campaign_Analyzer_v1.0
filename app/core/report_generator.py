@@ -1,3 +1,10 @@
+"""
+Generates reports from processed campaign data.
+
+This module provides functionality to create various types of reports,
+including plain text campaign diaries and detailed PDF summaries for
+missions and overall statistics, optionally including plots.
+"""
 from __future__ import annotations
 import tempfile
 from typing import Dict, Any, List
@@ -14,7 +21,19 @@ except Exception:
     PG_AVAILABLE = False
 
 class IL2ReportGenerator:
+    """
+    Generates reports from processed IL-2 campaign data.
+    """
     def generate_campaign_diary_txt(self, data: Dict[str, Any]) -> str:
+        """
+        Generate a plain text campaign diary.
+
+        Args:
+            data (Dict[str, Any]): The processed campaign data.
+
+        Returns:
+            str: The generated diary as a single string.
+        """
         pilot = data.get("pilot", {}); missions = data.get("missions", [])
         lines: List[str] = []
         lines.append(f"Diário de Bordo - {pilot.get('name', 'Piloto')}")
@@ -32,6 +51,18 @@ class IL2ReportGenerator:
         return "\n".join(lines)
 
     def generate_mission_report_pdf(self, mission_data: Dict[str, Any], all_missions: List[Dict[str, Any]], mission_index: int, output_path: str) -> bool:
+        """
+        Generate a detailed PDF report for a single mission.
+
+        Args:
+            mission_data (Dict[str, Any]): Data for the specific mission.
+            all_missions (List[Dict[str, Any]]): List of all missions for context.
+            mission_index (int): The index of the mission in `all_missions`.
+            output_path (str): The file path to save the generated PDF.
+
+        Returns:
+            bool: True if the PDF was generated successfully, False otherwise.
+        """
         if not mission_data: return False
         try:
             doc = SimpleDocTemplate(output_path, pagesize=A4)
@@ -80,6 +111,17 @@ class IL2ReportGenerator:
             return False
 
     def generate_stats_report_pdf(self, stats_data: Dict[str, Any], plots: Dict[str, Any], output_path: str) -> bool:
+        """
+        Generate a PDF report with overall campaign statistics and plots.
+
+        Args:
+            stats_data (Dict[str, Any]): The processed campaign statistics data.
+            plots (Dict[str, Any]): A dictionary of pyqtgraph plot widgets to include.
+            output_path (str): The file path to save the generated PDF.
+
+        Returns:
+            bool: True if the PDF was generated successfully, False otherwise.
+        """
         if not stats_data: return False
         try:
             doc = SimpleDocTemplate(output_path, pagesize=A4)

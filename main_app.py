@@ -1,3 +1,10 @@
+"""
+Main application entry point for the IL-2 Campaign Analyzer.
+
+This module initializes the PyQt5 application, sets up the main window,
+and manages the primary user interface, including data synchronization,
+UI updates, and report generation.
+"""
 from __future__ import annotations
 
 import sys
@@ -61,17 +68,45 @@ except Exception:
 
 
 class DataSyncThread(QThread):
+    """
+    Worker thread for synchronously processing campaign data.
+
+    This QThread runs the data processing in the background to prevent the UI
+    from freezing. It emits signals to update the main window on progress,
+
+    completion, or errors.
+
+    Attributes:
+        data_loaded (pyqtSignal): Emitted when data is successfully processed.
+        error_occurred (pyqtSignal): Emitted when an error occurs during processing.
+        progress (pyqtSignal): Emitted to update the progress bar.
+        started_sync (pyqtSignal): Emitted when the thread starts processing.
+    """
     data_loaded = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
     progress = pyqtSignal(int)
     started_sync = pyqtSignal()
 
     def __init__(self, pwcgfc_path: str, campaign_name: str, parent=None):
+        """
+        Initialize the data synchronization thread.
+
+        Args:
+            pwcgfc_path (str): The file path to the PWCGFC directory.
+            campaign_name (str): The name of the campaign to process.
+            parent (QObject, optional): The parent object. Defaults to None.
+        """
         super().__init__(parent)
         self.pwcgfc_path = pwcgfc_path
         self.campaign_name = campaign_name
 
     def run(self):
+        """
+        Execute the data processing task.
+
+        Initializes the data processor, processes the campaign, and emits
+        signals based on the outcome.
+        """
         try:
             self.started_sync.emit()
             self.progress.emit(5)
@@ -94,7 +129,17 @@ class DataSyncThread(QThread):
 
 
 class IL2CampaignAnalyzer(QMainWindow):
+    """
+    The main window for the IL-2 Campaign Analyzer application.
+
+    This class sets up the user interface, manages application state,
+    and connects UI elements to the underlying data processing and
+    reporting logic.
+    """
     def __init__(self):
+        """
+        Initialize the main application window.
+        """
         super().__init__()
         self.settings = QSettings("IL2CampaignAnalyzer", "Settings")
         self.pwcgfc_path: str = ""
@@ -108,6 +153,9 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.load_saved_settings()
 
     def setup_ui(self):
+        """
+        Initialize and arrange all UI widgets in the main window.
+        """
         self.setWindowTitle("IL-2 Campaign Analyzer")
         self.setGeometry(100, 100, 1200, 800)
 
@@ -158,6 +206,9 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.setStatusBar(QStatusBar())
 
     def create_tabs(self):
+        """
+        Create and register all the tabs for the main interface.
+        """
         self.tab_manager = TabManager(self.tabs)
 
         self.tab_dashboard = self.tab_manager.register_tab("Dashboard", DashboardTab, parent=self)
@@ -188,17 +239,29 @@ class IL2CampaignAnalyzer(QMainWindow):
             pass
 
     def _connect_signals(self):
+        """
+        Connect global application signals to their corresponding slots.
+        """
         signals.mission_selected.connect(self.on_mission_selected)
         signals.squadron_member_selected.connect(self.on_squadron_member_selected)
         signals.ace_selected.connect(self.on_ace_selected)
         signals.data_loaded.connect(self._on_global_data_loaded)
 
     def _on_global_data_loaded(self, data):
+        """
+        Slot to handle globally loaded data.
+
+        Args:
+            data (dict): The loaded campaign data.
+        """
         if isinstance(data, dict):
             self.current_data = data
             self.update_ui_with_data()
 
     def load_campaigns(self):
+        """
+        Load the list of available campaigns from the PWCGFC directory.
+        """
         if not self.pwcgfc_path:
             return
         parser = IL2DataParser(self.pwcgfc_path)
@@ -207,6 +270,9 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.campaign_combo.addItems(campaigns)
 
     def sync_data(self):
+        """
+        Start the data synchronization process in a background thread.
+        """
         current_campaign = self.campaign_combo.currentText()
         if not self.pwcgfc_path or not current_campaign:
             QMessageBox.warning(self, "Aviso", "Selecione a pasta e uma campanha primeiro!")
@@ -221,6 +287,12 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.sync_thread.start()
 
     def on_data_loaded(self, data):
+        """
+        Slot to handle successfully loaded data from the sync thread.
+
+        Args:
+            data (dict): The processed campaign data.
+        """
         if not isinstance(data, dict):
             QMessageBox.critical(self, "Erro", "Dados inválidos recebidos do processador.")
             self.progress_bar.setVisible(False)
@@ -235,11 +307,20 @@ class IL2CampaignAnalyzer(QMainWindow):
         self.statusBar().showMessage("Dados carregados com sucesso!", 5000)
 
     def on_sync_error(self, message):
+        """
+        Slot to handle errors reported by the sync thread.
+
+        Args:
+            message (str): The error message.
+        """
         self.progress_bar.setVisible(False)
         QMessageBox.critical(self, "Erro de Sincronização", message)
         self.statusBar().showMessage("Falha ao carregar dados.", 5000)
 
     def update_ui_with_data(self):
+        """
+        Update all UI elements with the newly loaded campaign data.
+        """
         self.export_pdf_button.setEnabled(False)
         self.diary_button.setEnabled(False)
         self.selected_mission_index = -1
@@ -290,6 +371,14 @@ class IL2CampaignAnalyzer(QMainWindow):
             )
 
     def on_mission_selected(self, mission_data):
+        """
+        Slot to handle the selection of a mission in the missions tab.
+
+        Enables or disables the PDF export button based on the selection.
+
+        Args:
+            mission_data (dict): The data for the selected mission.
+        """
         if mission_data:
             self.export_pdf_button.setEnabled(True)
             try:
@@ -301,16 +390,31 @@ class IL2CampaignAnalyzer(QMainWindow):
             self.selected_mission_index = -1
 
     def on_squadron_member_selected(self, member_data):
+        """
+        Slot to handle the selection of a squadron member.
+
+        Args:
+            member_data (dict): The data for the selected member.
+        """
         self.statusBar().showMessage(
             f"Selecionado: {member_data.get('name')} ({member_data.get('rank')})", 4000
         )
 
     def on_ace_selected(self, ace_data):
+        """
+        Slot to handle the selection of a campaign ace.
+
+        Args:
+            ace_data (dict): The data for the selected ace.
+        """
         self.statusBar().showMessage(
             f"Ás selecionado: {ace_data.get('name')} ({ace_data.get('victories')} vitórias)", 4000
         )
 
     def export_diary(self):
+        """
+        Export the entire campaign diary to a text file.
+        """
         if not self.current_data:
             QMessageBox.warning(self, "Aviso", "Sincronize os dados de uma campanha primeiro!")
             return
@@ -329,6 +433,9 @@ class IL2CampaignAnalyzer(QMainWindow):
                 QMessageBox.critical(self, "Erro", f"Falha ao salvar diário: {e}")
 
     def export_mission_pdf(self):
+        """
+        Export the details of the selected mission to a PDF file.
+        """
         if self.selected_mission_index == -1:
             QMessageBox.warning(self, "Aviso", "Selecione uma missão para exportar.")
             return
@@ -354,6 +461,9 @@ class IL2CampaignAnalyzer(QMainWindow):
                 QMessageBox.critical(self, "Erro", "Não foi possível gerar o PDF da missão.")
 
     def select_pwcgfc_folder(self):
+        """
+        Open a dialog to select the PWCGFC folder and save the path.
+        """
         folder_path = QFileDialog.getExistingDirectory(self, "Selecionar Pasta PWCGFC")
         if folder_path:
             self.pwcgfc_path = folder_path
@@ -362,6 +472,9 @@ class IL2CampaignAnalyzer(QMainWindow):
             self.load_campaigns()
 
     def load_saved_settings(self):
+        """
+        Load the PWCGFC folder path from application settings.
+        """
         saved_path = self.settings.value("pwcgfc_path", "")
         if saved_path and os.path.exists(saved_path):
             self.pwcgfc_path = saved_path
@@ -369,6 +482,14 @@ class IL2CampaignAnalyzer(QMainWindow):
             self.load_campaigns()
 
     def closeEvent(self, event):
+        """
+        Handle the window close event.
+
+        Saves the current PWCGFC path to settings before closing.
+
+        Args:
+            event (QCloseEvent): The close event.
+        """
         self.settings.setValue("pwcgfc_path", self.pwcgfc_path)
         event.accept()
 

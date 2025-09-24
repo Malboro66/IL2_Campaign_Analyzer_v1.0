@@ -1,25 +1,45 @@
-# app/ui/missions_tab.py
-
+"""
+Defines the UI tab for displaying campaign missions.
+"""
 from __future__ import annotations
 
 import re
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QSplitter, QGroupBox, QVBoxLayout,
+    QWidget, QVBoxLayout, QSplitter, QGroupBox,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
 
 class MissionsTab(QWidget):
+    """
+    A widget to display a list of campaign missions and their details.
+
+    This tab shows a table of all missions. When a mission is selected,
+    its description and a list of participating pilots are shown below.
+
+    Signals:
+        mission_selected (pyqtSignal): Emitted when a mission is selected
+                                       in the table.
+    """
     mission_selected = pyqtSignal(dict)
 
     def __init__(self, parent=None):
+        """
+        Initialize the MissionsTab.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self.missions_data = []
         self.selected_index = -1
         self._setup_ui()
 
     def _setup_ui(self):
+        """
+        Set up the user interface for the tab.
+        """
         layout = QVBoxLayout(self)
 
         splitter = QSplitter(Qt.Vertical)
@@ -47,6 +67,15 @@ class MissionsTab(QWidget):
 
     @staticmethod
     def _fmt_date(value: str) -> str:
+        """
+        Format a date string into DD/MM/YYYY format.
+
+        Args:
+            value (str): The raw date string from the data.
+
+        Returns:
+            str: The formatted date string.
+        """
         if not value:
             return ""
         s = str(value).strip()
@@ -62,6 +91,15 @@ class MissionsTab(QWidget):
 
     @staticmethod
     def _fmt_time_hhmm(s: str) -> str:
+        """
+        Format a time string into HH:MM format.
+
+        Args:
+            s (str): The raw time string.
+
+        Returns:
+            str: The formatted time string.
+        """
         if not s:
             return ""
         s = s.strip()
@@ -75,18 +113,42 @@ class MissionsTab(QWidget):
 
     @staticmethod
     def _extract_time_from_description(desc: str) -> str:
+        """
+        Extract a time string from the mission description text.
+
+        Args:
+            desc (str): The mission description.
+
+        Returns:
+            str: The extracted time string, or an empty string if not found.
+        """
         if not desc:
             return ""
         m = re.search(r"\b(\d{1,2}:\d{2}(?::\d{2})?)\b", desc)
         return m.group(1) if m else ""
 
     def _derive_display_time(self, mission: dict) -> str:
+        """
+        Derive the mission time, preferring the time found in the description.
+
+        Args:
+            mission (dict): The mission data dictionary.
+
+        Returns:
+            str: The derived and formatted time string.
+        """
         from_desc = self._extract_time_from_description(mission.get("description", "") or "")
         if from_desc:
             return self._fmt_time_hhmm(from_desc)
         return self._fmt_time_hhmm(mission.get("time", "") or "")
 
     def update_data(self, missions: list):
+        """
+        Update the table with a new list of missions.
+
+        Args:
+            missions (list): A list of mission data dictionaries.
+        """
         self.missions_data = missions or []
         self.missions_table.setRowCount(len(self.missions_data))
         self.details_text.clear()
@@ -107,6 +169,12 @@ class MissionsTab(QWidget):
             self._on_selection_changed()
 
     def _on_selection_changed(self):
+        """
+        Handle the selection of an item in the missions table.
+
+        Updates the details view with the selected mission's information
+        and emits the `mission_selected` signal.
+        """
         items = self.missions_table.selectedItems()
         if items:
             self.selected_index = items[0].row()

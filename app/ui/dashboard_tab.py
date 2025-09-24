@@ -1,3 +1,6 @@
+"""
+Defines the main dashboard tab for the application.
+"""
 from __future__ import annotations
 
 from PyQt5.QtWidgets import (
@@ -18,12 +21,27 @@ except Exception:
 
 
 class DashboardTab(BaseTab):
+    """
+    A widget that serves as the main dashboard for the campaign.
+
+    It displays key statistics, a list of top aces, and a chart showing
+    the trend of accumulated victories over time.
+    """
     def __init__(self, parent: QWidget | None = None) -> None:
+        """
+        Initialize the DashboardTab.
+
+        Args:
+            parent (QWidget | None, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self.all_data = {}
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        """
+        Set up the user interface for the tab.
+        """
         layout = QVBoxLayout(self)
 
         self.kpi_group = QGroupBox("Resumo da Campanha")
@@ -65,6 +83,12 @@ class DashboardTab(BaseTab):
         layout.addStretch(1)
 
     def update_data(self, data: dict) -> None:
+        """
+        Update the dashboard with new campaign data.
+
+        Args:
+            data (dict): The processed campaign data.
+        """
         if not data:
             return
 
@@ -96,6 +120,12 @@ class DashboardTab(BaseTab):
             self._update_trend_chart(missions)
 
     def _update_trend_chart(self, missions: list) -> None:
+        """
+        Update the cumulative victories trend chart.
+
+        Args:
+            missions (list): A list of mission data dictionaries.
+        """
         self.plot_trend.clear()
         if not missions:
             return

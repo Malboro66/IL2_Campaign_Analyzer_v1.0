@@ -1,5 +1,6 @@
-# app/ui/notifications_tab.py
-
+"""
+Defines the UI tab for viewing and filtering campaign notifications.
+"""
 from __future__ import annotations
 
 import re
@@ -8,21 +9,37 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
     QDateEdit, QPushButton, QCheckBox, QLineEdit, QComboBox, QGroupBox, QGridLayout
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import QDate
 
 
 class NotificationsTab(QWidget):
+    """
+    A widget for viewing and filtering campaign log notifications.
+
+    This tab provides a comprehensive set of controls to filter notifications
+    by date, source, category, and keywords, displaying the results in a
+    text area.
+    """
     def __init__(self, parent=None):
+        """
+        Initialize the NotificationsTab.
+
+        Args:
+            parent (QWidget, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
-        self._idx = {}           # notifications_index inteiro
-        self._by_date = {}       # dict "DD/MM/YYYY" -> {"squadron":[...], "other":[...]}
-        self._side = "ENTENTE"   # lado atual (informativo, vindo do processor)
+        self._idx = {}           # Full notifications_index
+        self._by_date = {}       # Dict "DD/MM/YYYY" -> {"squadron":[...], "other":[...]}
+        self._side = "ENTENTE"   # Current campaign side (from processor)
         self._setup_ui()
 
     def _setup_ui(self):
+        """
+        Set up the user interface for the tab.
+        """
         layout = QVBoxLayout(self)
 
-        # Linha superior: período e atalhos
+        # Top row: date period and shortcuts
         period_row = QHBoxLayout()
         period_row.addWidget(QLabel("De:"))
 
@@ -44,7 +61,7 @@ class NotificationsTab(QWidget):
 
         layout.addLayout(period_row)
 
-        # Linha de origem (esquadrão vs outras)
+        # Origin filter row (squadron vs. other)
         origin_row = QHBoxLayout()
         origin_row.addWidget(QLabel("Origem:"))
         self.chk_squad = QCheckBox("Esquadrão")
@@ -56,7 +73,7 @@ class NotificationsTab(QWidget):
         origin_row.addStretch(1)
         layout.addLayout(origin_row)
 
-        # Grupo de categorias (apenas as solicitadas)
+        # Category filter group
         cat_group = QGroupBox("Categorias")
         gl = QGridLayout()
         self.chk_cat_promotions   = QCheckBox("Promoções")
@@ -75,7 +92,7 @@ class NotificationsTab(QWidget):
         cat_group.setLayout(gl)
         layout.addWidget(cat_group)
 
-        # Linha de texto/participantes
+        # Keyword filter row
         text_row = QHBoxLayout()
         text_row.addWidget(QLabel("Incluir palavras:"))
         self.txt_include = QLineEdit()
@@ -97,7 +114,7 @@ class NotificationsTab(QWidget):
         ppl_row.addStretch(1)
         layout.addLayout(ppl_row)
 
-        # Botões de ação
+        # Action buttons
         buttons = QHBoxLayout()
         self.apply_btn = QPushButton("Aplicar filtro")
         self.apply_btn.clicked.connect(self._render)
@@ -110,7 +127,7 @@ class NotificationsTab(QWidget):
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        # Área de texto com o histórico
+        # Results text area
         self.title_label = QLabel("Notificações")
         self.title_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.title_label)
@@ -122,13 +139,17 @@ class NotificationsTab(QWidget):
     # ---------- Datas ----------
     @staticmethod
     def _qdate_from_ddmmyyyy(s: str) -> QDate:
+        """Convert a DD/MM/YYYY string to a QDate object."""
         try:
             d = datetime.strptime(s, "%d/%m/%Y")
             return QDate(d.year, d.month, d.day)
         except Exception:
             return QDate()
 
-    def _compute_min_max_dates(self):
+    def _compute_min_max_dates(self) -> tuple[QDate, QDate]:
+        """
+        Compute the minimum and maximum dates from the available notifications.
+        """
         if not self._by_date:
             return QDate(), QDate()
         dates = [self._qdate_from_ddmmyyyy(k) for k in self._by_date.keys()]
@@ -138,6 +159,9 @@ class NotificationsTab(QWidget):
         return min(dates), max(dates)
 
     def _apply_quick_range(self):
+        """
+        Set the date range filters based on a predefined selection (e.g., "Last 7 days").
+        """
         if not self._by_date:
             return
         min_d, max_d = self._compute_min_max_dates()
@@ -173,12 +197,15 @@ class NotificationsTab(QWidget):
             self.date_to.setDate(ref_q)
 
     def _clear_filter(self):
+        """
+        Reset all filter controls to their default state and re-render.
+        """
         min_d, max_d = self._compute_min_max_dates()
         if min_d.isValid():
             self.date_from.setDate(min_d)
         if max_d.isValid():
             self.date_to.setDate(max_d)
-        # Resetar controles
+        # Reset controls
         self.chk_squad.setChecked(True)
         self.chk_other_origin.setChecked(True)
         for w in [
@@ -193,24 +220,30 @@ class NotificationsTab(QWidget):
         self._render()
 
     # ---------- Categorias ----------
-    def _categorize(self, text: str) -> set:
+    def _categorize(self, text: str) -> set[str]:
         """
-        Devolve um conjunto de categorias heurísticas com base no texto.
-        'others' será usada quando nada for identificado ou quando o tema não tiver filtro dedicado.
+        Assign a set of heuristic categories to a notification based on its text.
+
+        Args:
+            text (str): The notification text.
+
+        Returns:
+            set[str]: A set of category names (e.g., {'promotions', 'awards'}).
+                      Returns {'others'} if no specific category is matched.
         """
         t = text.lower()
 
         cats = set()
-        # promoções
+        # promotions
         if re.search(r"\b(promoted|promotion|promo(ç|c)[aã]o|promovido)\b", t):
             cats.add("promotions")
-        # condecorações
+        # awards
         if re.search(r"\b(award(ed)?|awarded|medal|decorat|condecor|croix|pour le merite|blue max)\b", t):
             cats.add("awards")
-        # baixas (POW/capturado incluído)
+        # casualties
         if re.search(r"\b(kia|mia|wounded|killed|ferid|morto|desaparecido|pow|prisoner|capturad|taken prisoner)\b", t):
             cats.add("casualties")
-        # vitórias (ampliado)
+        # victories
         if any([
             re.search(r"\b(victor(y|ies)|kill(s)?|abate(u|u)?|vit[oó]ri[ao]s?\b)", t),
             re.search(r"\b(shot down|downed|brought down)\b", t),
@@ -220,13 +253,15 @@ class NotificationsTab(QWidget):
         ]):
             cats.add("kills")
 
-        # Qualquer outro tema (clima, base, transferências, perdas, etc.) vai para 'others'
         if not cats:
             cats.add("others")
 
         return cats
 
-    def _selected_categories(self) -> set:
+    def _selected_categories(self) -> set[str]:
+        """
+        Get the set of categories currently selected by the user.
+        """
         selected = set()
         if self.chk_cat_promotions.isChecked(): selected.add("promotions")
         if self.chk_cat_awards.isChecked():     selected.add("awards")
@@ -237,25 +272,36 @@ class NotificationsTab(QWidget):
 
     # ---------- Filtro principal ----------
     def _passes_filters(self, date_str: str, text: str, is_squadron: bool) -> bool:
-        # Data
+        """
+        Check if a single notification passes all currently active filters.
+
+        Args:
+            date_str (str): The date of the notification ('DD/MM/YYYY').
+            text (str): The notification text.
+            is_squadron (bool): True if the notification is from the player's squadron.
+
+        Returns:
+            bool: True if the notification should be displayed, False otherwise.
+        """
+        # Date
         qd = QDate.fromString(date_str, "dd/MM/yyyy")
         if qd.isValid():
             if qd < self.date_from.date() or qd > self.date_to.date():
                 return False
 
-        # Origem
+        # Origin
         if is_squadron and not self.chk_squad.isChecked():
             return False
         if (not is_squadron) and not self.chk_other_origin.isChecked():
             return False
 
-        # Categorias: exigir interseção com o conjunto selecionado
+        # Categories
         cats = self._categorize(text)
         selected = self._selected_categories()
         if selected and cats.isdisjoint(selected):
             return False
 
-        # Texto: incluir / excluir
+        # Keywords
         inc = [w.strip().lower() for w in self.txt_include.text().split(",") if w.strip()]
         exc = [w.strip().lower() for w in self.txt_exclude.text().split(",") if w.strip()]
         low = text.lower()
@@ -265,7 +311,7 @@ class NotificationsTab(QWidget):
         if exc and any(w in low for w in exc):
             return False
 
-        # Participantes (piloto/unidade)
+        # Actor (pilot/unit)
         actor = self.txt_actor.text().strip().lower()
         if actor and actor not in low:
             return False
@@ -275,21 +321,22 @@ class NotificationsTab(QWidget):
     # ---------- API ----------
     def update_data(self, data: dict):
         """
-        Recebe o dicionário completo da aplicação e extrai notifications_index:
-          { "side": "...", "by_date": { "DD/MM/YYYY": { "squadron": [...], "other": [...] } } }
+        Update the tab with new notification data from the main data structure.
+
+        Args:
+            data (dict): The complete processed campaign data dictionary.
         """
         self._idx = (data or {}).get("notifications_index") or {}
         self._side = self._idx.get("side") or "ENTENTE"
         self._by_date = self._idx.get("by_date") or {}
 
-        # Configurar limites de data
+        # Set date range controls
         min_d, max_d = self._compute_min_max_dates()
         if min_d.isValid() and max_d.isValid():
             self.date_from.setMinimumDate(min_d)
             self.date_from.setMaximumDate(max_d)
             self.date_to.setMinimumDate(min_d)
             self.date_to.setMaximumDate(max_d)
-            # Defaults: período completo
             self.date_from.setDate(min_d)
             self.date_to.setDate(max_d)
             self.quick_range.setCurrentIndex(0)
@@ -297,6 +344,9 @@ class NotificationsTab(QWidget):
         self._render()
 
     def _render(self):
+        """
+        Render the filtered notifications into the main text area.
+        """
         self.text.clear()
 
         lines = ["Notificações"]
@@ -306,14 +356,12 @@ class NotificationsTab(QWidget):
             self.text.setText("\n".join(lines))
             return
 
-        # Iterar por data em ordem crescente
         any_output = False
         for date_str in sorted(self._by_date.keys(), key=lambda s: datetime.strptime(s, "%d/%m/%Y")):
             groups = self._by_date.get(date_str) or {}
             squad = groups.get("squadron") or []
             other = groups.get("other") or []
 
-            # Filtrar entradas por critérios
             squad_f = [t for t in squad if self._passes_filters(date_str, t, True)]
             other_f = [t for t in other if self._passes_filters(date_str, t, False)]
 

@@ -1,3 +1,6 @@
+"""
+Defines the UI tab for displaying campaign aces.
+"""
 from __future__ import annotations
 
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
@@ -10,12 +13,26 @@ except Exception:
 
 
 class AcesTab(QWidget):
+    """
+    A widget to display a list of campaign aces in a table.
+
+    Aces are pilots with more than 5 victories, sorted by their score.
+    """
     def __init__(self, parent: QWidget | None = None) -> None:
+        """
+        Initialize the AcesTab.
+
+        Args:
+            parent (QWidget | None, optional): The parent widget. Defaults to None.
+        """
         super().__init__(parent)
         self.aces_data = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        """
+        Set up the user interface for the tab.
+        """
         layout = QVBoxLayout(self)
         self.table = QTableWidget()
         self.table.setColumnCount(2)
@@ -28,6 +45,16 @@ class AcesTab(QWidget):
         layout.addWidget(self.table)
 
     def update_data(self, aces: list) -> None:
+        """
+        Update the table with a new list of aces.
+
+        The list is filtered to include only pilots with more than 5 victories
+        and then sorted in descending order of victories.
+
+        Args:
+            aces (list): A list of dictionaries, where each dictionary
+                         represents an ace.
+        """
         valid = [a for a in (aces or []) if isinstance(a, dict)]
         filtered_sorted = sorted(
             (a for a in valid if int(a.get("victories", 0) or 0) > 5),
@@ -41,6 +68,11 @@ class AcesTab(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(str(int(ace.get("victories", 0) or 0))))
 
     def _on_selection_changed(self) -> None:
+        """
+        Handle the selection of an item in the table.
+
+        Emits the `ace_selected` signal with the data of the selected ace.
+        """
         items = self.table.selectedItems()
         if not items:
             return
